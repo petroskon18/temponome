@@ -279,6 +279,7 @@ document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
 // ---------- sound ----------
 $('device').onchange = () => T.saveCfg({ device: $('device').value });
 $('lock').onclick = () => { const on = $('lock').getAttribute('aria-checked') !== 'true'; $('lock').setAttribute('aria-checked', on); T.saveCfg({ lock: on }); };
+$('steady').onclick = () => { const on = $('steady').getAttribute('aria-checked') !== 'true'; $('steady').setAttribute('aria-checked', on); T.saveCfg({ steady: on }); };
 $('sens').oninput = () => T.saveCfg({ sensitivity: +$('sens').value });
 $('minB').oninput = () => { $('minBv').textContent = $('minB').value + '%'; T.saveCfg({ minB: +$('minB').value }); };
 
@@ -474,6 +475,7 @@ async function init() {
   $('device').value = cfg.device;
   document.querySelector(`input[name=mode][value=${cfg.mode}]`).checked = true;
   $('lock').setAttribute('aria-checked', !!cfg.lock);
+  $('steady').setAttribute('aria-checked', cfg.steady !== false);
   $('sens').value = cfg.sensitivity; $('minB').value = cfg.minB; $('minBv').textContent = cfg.minB + '%';
   setLead(cfg.lead);
   buildWheel(); showMode();

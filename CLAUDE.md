@@ -93,7 +93,7 @@ anything they must do on their Mac, and keep the double-click launcher working.
   Stop putting the lights back). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (58 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (68 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -125,6 +125,11 @@ anything they must do on their Mac, and keep the double-click launcher working.
 4. **Lock to tempo** (default on): instead of firing on every onset, it fires on a
    steady beat grid (`t0` + k·period) that real onsets nudge into place. This
    removed jitter from noisy mic input.
+   Steadiness (2026-11-24, setting `steady`, Settings → Sound "Smooth out tempo jumps",
+   default on; off = the old rules exactly): the first tempo reading replaces the 110 placeholder at once;
+   later big changes need 4 estimates in a row (2 s), double/half/3:2 jumps need 8 (4 s).
+   Phase corrections glide (`GLIDE_RATE` 0.1 beat per beat) instead of snapping, except in
+   the first `SNAP_SECONDS` (8 s) of a grid, which also pulls harder onto hits.
 5. **Lights:** each light has its own envelope (jumps to 1 on a beat, then decays
    by the "pulse length" half-life). Its brightness is rounded to 10% steps, and a
    command is sent only when the value changed. Sends run in parallel, one in flight
@@ -176,6 +181,11 @@ anything they must do on their Mac, and keep the double-click launcher working.
   fixed jitter from the mic.
 - "Stuck at minimum brightness" was caused by no or very quiet input. That led to
   auto-gain, the second detector, the silence warning and the test-flash button.
+- Nov 2026 "uneven, stutters": measured on 8 of the owner's real songs offline
+  (BeatTracker fed with a simulated clock). 10.6% of beats were doubled or missing, ~95%
+  of them right after a tempo flip (often to double) or a half-beat phase snap. The
+  tempo/phase changes above cut it to 2.0% with the same on-beat score. Real Tapo round
+  trips were 95–220 ms (median 100–145), so bulb jitter is a smaller, separate effect.
 - Widening the flux band to 4 kHz broke tempo on clean music (hi-hats pulled it to
   80 or 148 BPM), so it was reverted. Keep the tempo band low.
 - Bulb command round trip is about 50–150 ms over Wi-Fi, so it can never be

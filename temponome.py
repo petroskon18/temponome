@@ -49,6 +49,7 @@ DEFAULTS = {
     "maxB": 100,
     "sensitivity": 1.5,
     "lock": True,          # steady tempo grid (recommended for microphone)
+    "steady": True,        # ignore brief tempo flips and slide the grid instead of jumping
     "lead": 60,            # ms to fire early to cover bulb lag
     "smooth": 0.4,         # 0 = snappy short pulses, 1 = long smooth pulses
 }
@@ -454,6 +455,11 @@ class BeatTracker:
         self.onset_flag = False
         self.onset_count = 0
         self.cand, self.cand_n = 0.0, 0
+        self.shift_left = 0.0      # phase correction still to apply, gently (s)
+        self.grid_t = 0.0          # when the current grid was started
+        self.tempo_known = False   # False while bpm is still the 110 placeholder
+        self.steady = True         # setting "Smooth out tempo jumps"; off = the pre-Nov-24 rules
+        self.glide_t = None
 
     # called from the audio thread for every block
     def process(self, block, sens, now=None):
@@ -492,6 +498,7 @@ class BeatTracker:
             self.onset_flag = True
             self.onset_count += 1
             self._align(now)
+        self._glide(now)
         if now - self.last_est > 0.5 and len(self.flux_hist) > self.FPS * 4:
             self.last_est = now
             self._estimate_tempo(now)
@@ -499,17 +506,18 @@ class BeatTracker:
     def _align(self, now):
         T = 60.0 / self.bpm
         if self.t0 is None:
-            self.t0 = now
+            self.t0 = self.grid_t = now
             return
         k = round((now - self.t0) / T)
         err = now - (self.t0 + k * T)
         if abs(err) < 0.3 * T:
-            self.t0 += 0.25 * err      # gently pull the grid onto the real hits
+            young = self.steady and now - self.grid_t < self.SNAP_SECONDS
+            self.t0 += (0.5 if young else 0.25) * err   # pull the grid onto the real hits
             self.off_grid = 0
         else:
             self.off_grid += 1         # off-beat / noise: ignore it
             if self.off_grid >= 8:     # grid is clearly wrong: restart from here
-                self.t0, self.off_grid = now, 0
+                self.t0, self.off_grid, self.grid_t = now, 0, now
 
     def _estimate_tempo(self, now):
         x = np.array(self.flux_hist, dtype=np.float64)
@@ -531,26 +539,65 @@ class BeatTracker:
             off = 0.5 * (y0 - y2) / den if den else 0.0
         else:
             off = 0.0
-        new = 60.0 * self.FPS / (lags[i] + off)
+        self._consider_tempo(60.0 * self.FPS / (lags[i] + off), now)
+        self._check_phase()
+
+    # How many estimates in a row (one every 0.5 s) a big tempo change needs before it's used.
+    # Songs often read as double or half (or 3:2) their tempo for a moment; flipping to it
+    # breaks the flash rhythm, so those need twice the proof of a real tempo change.
+    NEW_TEMPO_PROOF, RELATED_TEMPO_PROOF = 4, 8
+
+    def _consider_tempo(self, new, now):
+        if not self.tempo_known and self.steady:   # replacing the placeholder needs no proof
+            self.tempo_known = True
+            self._set_bpm(new, now)
+            self.grid_t = now
+            return
         if abs(np.log(new / self.bpm)) < 0.08:
             self._set_bpm(0.8 * self.bpm + 0.2 * new, now)
             self.cand_n = 0
-        else:                           # big change: only accept if it repeats
-            if self.cand and abs(np.log(new / self.cand)) < 0.05:
-                self.cand_n += 1
-            else:
-                self.cand, self.cand_n = new, 1
-            if self.cand_n >= 3:
-                self._set_bpm(new, now)
-                self.cand_n = 0
-        self._check_phase()
+            return
+        if self.cand and abs(np.log(new / self.cand)) < 0.05:
+            self.cand_n += 1
+        else:
+            self.cand, self.cand_n = new, 1
+        ratio = new / self.bpm
+        related = min(abs(np.log(ratio / m)) for m in (2.0, 0.5, 1.5, 2 / 3)) < 0.06
+        need = (self.RELATED_TEMPO_PROOF if related else self.NEW_TEMPO_PROOF) if self.steady else 3
+        if self.cand_n >= need:
+            self._set_bpm(new, now)
+            self.cand_n = 0
+
+    # Phase corrections slide the grid by at most this fraction of a beat per beat, so moving
+    # onto the right beat never shows as a double flash or a gap.
+    GLIDE_RATE = 0.1
+    PHASE_VOTES = 2            # checks in a row (0.5 s apart) that must agree before moving
+
+    SNAP_SECONDS = 8.0          # a grid younger than this jumps straight into place
+
+    def _shift_phase(self, err, now):
+        if not self.steady or now - self.grid_t < self.SNAP_SECONDS:
+            self.t0 += err
+            self.shift_left = 0.0
+        else:
+            self.shift_left = err
+
+    def _glide(self, now):
+        dt = 0.0 if self.glide_t is None else min(0.1, max(0.0, now - self.glide_t))
+        self.glide_t = now
+        if self.shift_left and self.t0 is not None:
+            step = max(-self.GLIDE_RATE * dt, min(self.GLIDE_RATE * dt, self.shift_left))
+            self.t0 += step
+            self.shift_left -= step
+            if abs(self.shift_left) < 1e-4:
+                self.shift_left = 0.0
 
     def _check_phase(self):
         """Make sure the grid sits on the strong beats, not between them.
         Onsets alone can lock it half a beat off (e.g. onto hi-hats between kicks), so
         compare the summed low-band flux along every possible grid position over the
         last few seconds and move the grid if a clearly different position wins twice."""
-        if self.t0 is None or len(self.flux_hist) < self.FPS * 4:
+        if self.t0 is None or self.shift_left or len(self.flux_hist) < self.FPS * 4:
             return
         x = np.asarray(self.flux_hist, dtype=np.float64)
         ts = np.asarray(self.flux_t)
@@ -571,8 +618,8 @@ class BeatTracker:
         cur = int(round(((ts[-1] - self.t0) % T) * self.FPS)) % len(phis)   # current grid position
         if abs(err) > 0.2 * T and score[best] > 1.15 * score[cur]:
             self.phase_votes += 1
-            if self.phase_votes >= 2:
-                self.t0 = beat
+            if self.phase_votes >= self.PHASE_VOTES:
+                self._shift_phase(err, ts[-1])
                 self.off_grid = 0
                 self.phase_votes = 0
         else:
@@ -881,6 +928,7 @@ class Engine:
         tracker = BeatTracker()
 
         def callback(indata, frames, t, status):
+            tracker.steady = self.cfg.get("steady", True)
             tracker.process(indata[:, 0].astype(np.float32), self.cfg["sensitivity"])
 
         dev = c["device"]
@@ -1118,6 +1166,7 @@ def _apply_config_locked(body):
     new["sensitivity"] = float(new["sensitivity"])
     new["smooth"] = float(new["smooth"])
     new["lock"] = bool(new["lock"])
+    new["steady"] = bool(new["steady"])
     new["lead"] = max(-150, min(250, int(new["lead"])))
     relist = _light_set(new["devices"]) != _light_set(ENGINE.cfg["devices"])
     ENGINE.cfg = new

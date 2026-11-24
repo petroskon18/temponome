@@ -249,6 +249,113 @@ class DeckState(unittest.TestCase):
             T.ENGINE.lamps = []
 
 
+class BeatSteadiness(unittest.TestCase):
+    """Real songs made the grid flip tempo (often to double) and snap half a beat at a time,
+    which showed as double flashes and gaps."""
+
+    def tracker(self, bpm=90.0, now=100.0):
+        tr = T.BeatTracker()
+        tr.bpm, tr.t0, tr.last_onset = bpm, now, now
+        tr.tempo_known = True
+        return tr
+
+    def test_first_tempo_is_taken_at_once(self):
+        tr = T.BeatTracker()                          # 110 is only a placeholder guess
+        tr._consider_tempo(128.0, 100.0)
+        self.assertAlmostEqual(tr.bpm, 128.0)
+
+    def test_grid_locks_on_faster_once_the_first_tempo_is_found(self):
+        tr = T.BeatTracker()
+        tr.t0, tr.last_onset = 100.0, 100.0
+        tr._consider_tempo(150.0, 102.5)
+        self.assertAlmostEqual(tr.grid_t, 102.5)
+        t0 = tr.t0
+        tr._align(t0 + 2 * 0.4 + 0.1)                    # a hit 100 ms after the grid
+        self.assertAlmostEqual(tr.t0 - t0, 0.05)         # young grid: pulled halfway
+        tr.grid_t = 0.0
+        t0 = tr.t0
+        tr._align(t0 + 2 * 0.4 + 0.1)
+        self.assertAlmostEqual(tr.t0 - t0, 0.025)        # settled grid: a quarter
+
+    def test_switched_off_behaves_like_before(self):
+        tr = self.tracker(90.0)
+        tr.steady = False
+        for k in range(3):
+            tr._consider_tempo(180.0, 100.0 + 0.5 * k)
+        self.assertAlmostEqual(tr.bpm, 180.0)         # old rule: 3 estimates, any jump
+        tr._shift_phase(0.2, now=200.0)
+        self.assertEqual(tr.shift_left, 0.0)          # old rule: snaps at once
+        fresh = T.BeatTracker()
+        fresh.steady = False
+        fresh._consider_tempo(128.0, 100.0)
+        self.assertAlmostEqual(fresh.bpm, 110.0)      # old rule: even the first needs proof
+
+    def test_setting_defaults_on_and_is_saved(self):
+        self.assertIs(T.DEFAULTS["steady"], True)
+        reset_home()
+        old = T.ENGINE.cfg
+        try:
+            T.ENGINE.cfg = T.load_config()
+            T.apply_config({"steady": 0})
+            self.assertIs(T.ENGINE.cfg["steady"], False)
+        finally:
+            T.ENGINE.cfg = old
+
+    def test_double_tempo_needs_longer_proof(self):
+        tr = self.tracker(90.0)
+        for k in range(4):
+            tr._consider_tempo(180.0, 100.0 + 0.5 * k)
+        self.assertAlmostEqual(tr.bpm, 90.0)          # 2 s of "double" is not enough
+        for k in range(4, 8):
+            tr._consider_tempo(180.0, 100.0 + 0.5 * k)
+        self.assertAlmostEqual(tr.bpm, 180.0)         # 4 s of it is
+
+    def test_new_tempo_is_followed_within_two_seconds(self):
+        tr = self.tracker(90.0)
+        for k in range(4):
+            tr._consider_tempo(126.0, 100.0 + 0.5 * k)
+        self.assertAlmostEqual(tr.bpm, 126.0)
+
+    def test_small_tempo_drift_is_smoothed(self):
+        tr = self.tracker(120.0)
+        tr._consider_tempo(122.0, 100.0)
+        self.assertAlmostEqual(tr.bpm, 120.4)
+
+    def test_phase_correction_glides_without_double_flash_or_gap(self):
+        tr = self.tracker(120.0, now=100.0)           # beats at 100.0, 100.5, ...
+        tr._shift_phase(0.2, now=120.0)               # settled grid; the hits are really at 100.2, ...
+        beats, now = [], 100.0
+        while now < 106.0:
+            tr.last_onset = now
+            tr._glide(now)
+            beats += tr.poll_events(now, 0.0, True)
+            now += 0.01
+        gaps = [b - a for a, b in zip(beats, beats[1:])]
+        self.assertTrue(all(0.4 <= g <= 0.6 for g in gaps), gaps)
+        self.assertAlmostEqual((beats[-1] - 100.2) % 0.5, 0.0, delta=0.02)   # ends on the hits
+
+    def test_new_grid_snaps_straight_into_place(self):
+        tr = self.tracker(120.0, now=100.0)
+        tr.grid_t = 100.0                              # grid only just found
+        tr._shift_phase(0.2, now=101.0)
+        self.assertAlmostEqual(tr.t0, 100.2)
+        self.assertEqual(tr.shift_left, 0.0)
+
+    def test_settled_grid_glides(self):
+        tr = self.tracker(120.0, now=100.0)
+        tr.grid_t = 100.0
+        tr._shift_phase(0.2, now=120.0)
+        self.assertAlmostEqual(tr.t0, 100.0)
+        self.assertAlmostEqual(tr.shift_left, 0.2)
+
+    def test_no_new_phase_vote_while_gliding(self):
+        tr = self.tracker(120.0)
+        tr._shift_phase(0.2, now=120.0)
+        tr.phase_votes = 5
+        tr._check_phase()
+        self.assertAlmostEqual(tr.shift_left, 0.2)
+
+
 class ColorBlend(unittest.TestCase):
     """Calm -> energetic blends go around the color wheel, so the middle stays vivid."""
 

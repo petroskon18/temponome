@@ -120,6 +120,8 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
  <div class="group">
   <div class="row"><span class="grow" id="lockLbl">Follow a steady beat<br><span class="hint" style="margin:0">Steadier flashes, especially with a microphone</span></span>
    <span class="switch"><button class="track" id="lock" role="switch" aria-labelledby="lockLbl" aria-checked="true"><span class="knob"></span></button></span></div>
+  <div class="row"><span class="grow" id="steadyLbl">Smooth out tempo jumps<br><span class="hint" style="margin:0">Fewer double flashes and gaps. Turn off to react to tempo changes faster</span></span>
+   <span class="switch"><button class="track" id="steady" role="switch" aria-labelledby="steadyLbl" aria-checked="true"><span class="knob"></span></button></span></div>
   <div class="row" style="display:block"><label for="sens">Which beats</label>
    <input type="range" id="sens" min="1.1" max="2.5" step="0.05">
    <div class="ends marking"><span>More, lighter beats</span><span>Fewer, strong beats</span></div></div>
