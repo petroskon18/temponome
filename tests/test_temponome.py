@@ -356,6 +356,99 @@ class BeatSteadiness(unittest.TestCase):
         self.assertAlmostEqual(tr.shift_left, 0.2)
 
 
+class FakeBackend:
+    """Stands in for CoreAudio: three outputs, MacBook speakers are the default."""
+    def __init__(self, with_blackhole=True):
+        self.devs = [{"id": 2, "uid": "MBA", "name": "MacBook Air Speakers", "transport": "bltn", "latency_ms": 14.0},
+                     {"id": 3, "uid": "JBL", "name": "JBL Flip", "transport": "blue", "latency_ms": 160.0}]
+        if with_blackhole:
+            self.devs.insert(0, {"id": 1, "uid": "BlackHole2ch_UID", "name": "BlackHole 2ch",
+                                 "transport": "virt", "latency_ms": 0.0})
+        self.cur = 2
+        self.vols = {d["id"]: 1.0 for d in self.devs}
+
+    def devices(self):
+        return [dict(d) for d in self.devs]
+
+    def default(self):
+        return self.cur
+
+    def set_default(self, dev_id):
+        self.cur = dev_id
+
+    def volume(self, dev_id):
+        return self.vols.get(dev_id)
+
+    def set_volume(self, dev_id, v):
+        self.vols[dev_id] = v
+
+
+class AudioRoute(unittest.TestCase):
+    def setUp(self):
+        import audio_route as AR
+        self.AR = AR
+        self.old = AR.BACKEND
+        AR.BACKEND = self.fake = FakeBackend()
+        self.saved = []
+
+    def tearDown(self):
+        self.AR.BACKEND = self.old
+
+    def save(self, uid):
+        self.saved.append(uid)
+
+    def test_lists_outputs(self):
+        outs = {o["uid"]: o for o in self.AR.list_outputs()}
+        self.assertTrue(outs["BlackHole2ch_UID"]["blackhole"])
+        self.assertTrue(outs["MBA"]["builtin"])
+        self.assertEqual(outs["JBL"]["latency_ms"], 160.0)
+        self.assertEqual(self.AR.default_output(), "MBA")
+
+    def test_switch_and_restore(self):
+        prev = self.AR.switch_to_blackhole(self.save)
+        self.assertEqual(prev, "MBA")
+        self.assertEqual(self.saved, ["MBA"])
+        self.assertEqual(self.fake.cur, 1)
+        self.AR.restore_output(prev, self.save)
+        self.assertEqual(self.fake.cur, 2)
+        self.assertEqual(self.saved, ["MBA", ""])
+
+    def test_restore_to_vanished_device_uses_builtin(self):
+        self.fake.cur = 3
+        prev = self.AR.switch_to_blackhole(self.save)
+        self.fake.devs = [d for d in self.fake.devs if d["uid"] != "JBL"]
+        self.AR.restore_output(prev, self.save)
+        self.assertEqual(self.fake.cur, 2)
+
+    def test_no_blackhole_leaves_output_alone(self):
+        self.AR.BACKEND = self.fake = FakeBackend(with_blackhole=False)
+        with self.assertRaises(RuntimeError) as cm:
+            self.AR.switch_to_blackhole(self.save)
+        self.assertIn("BlackHole", str(cm.exception))
+        self.assertEqual(self.fake.cur, 2)
+        self.assertEqual(self.saved, [])
+
+    def test_recover_on_launch(self):
+        self.fake.cur = 1                         # left on BlackHole by a crash
+        self.assertTrue(self.AR.recover({"restore_out": "MBA"}, self.save))
+        self.assertEqual(self.fake.cur, 2)
+        self.assertEqual(self.saved, [""])
+
+    def test_recover_does_nothing_when_user_changed_it(self):
+        self.fake.cur = 3
+        self.assertFalse(self.AR.recover({"restore_out": "MBA"}, self.save))
+        self.assertEqual(self.fake.cur, 3)
+        self.assertEqual(self.saved, [""])        # stale note is cleared
+        self.assertFalse(self.AR.recover({"restore_out": ""}, self.save))
+
+    def test_previous_blackhole_means_builtin(self):
+        self.assertEqual(self.AR.pick_speaker("", "BlackHole2ch_UID")["uid"], "MBA")
+
+    def test_chosen_missing_falls_back_to_previous(self):
+        self.assertEqual(self.AR.pick_speaker("GONE", "JBL")["uid"], "JBL")
+        self.assertEqual(self.AR.pick_speaker("JBL", "MBA")["uid"], "JBL")
+
+
 class ColorBlend(unittest.TestCase):
     """Calm -> energetic blends go around the color wheel, so the middle stays vivid."""
 
