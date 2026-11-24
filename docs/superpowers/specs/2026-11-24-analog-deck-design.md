@@ -29,7 +29,7 @@ answer a real question: is each light on the beat, and is any light not answerin
 ## Approaches considered
 - Pro deck (LP120), studio headphones (M50x), VU meter: owner picked the VU meter.
 - Color picker: gel swatches, tempo strip, hue dials, moods: owner picked the tempo strip,
-  then asked for a segmented wheel like his reference images; one wheel with two markers
+  then asked for a segmented wheel like the owner's reference images; one wheel with two markers
   (A) over two wheels (B); gaps between pieces removed.
 
 ## Decided details
