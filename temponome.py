@@ -25,6 +25,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
+import audio_route
+import passthrough
+
 PORT = 8765
 SAMPLE_RATE = 44100
 BLOCK = 512
@@ -50,6 +53,10 @@ DEFAULTS = {
     "sensitivity": 1.5,
     "lock": True,          # steady tempo grid (recommended for microphone)
     "steady": True,        # ignore brief tempo flips and slide the grid instead of jumping
+    "passthru": False,     # play the music through Temponome, delayed, so lights land on the hits
+    "out_device": "",      # speaker UID for pass-through ("" = the one used before Play)
+    "spk_delay": {},       # speaker UID -> its own delay in ms (wireless speakers play late)
+    "restore_out": "",     # output to put back after pass-through (kept in case of a crash)
     "lead": 60,            # ms to fire early to cover bulb lag
     "smooth": 0.4,         # 0 = snappy short pulses, 1 = long smooth pulses
 }
@@ -454,6 +461,7 @@ class BeatTracker:
         self.last_fired = 0.0
         self.onset_flag = False
         self.onset_count = 0
+        self.recent = deque(maxlen=8)   # times of the latest hits (for snapping in pass-through)
         self.cand, self.cand_n = 0.0, 0
         self.shift_left = 0.0      # phase correction still to apply, gently (s)
         self.grid_t = 0.0          # when the current grid was started
@@ -497,6 +505,7 @@ class BeatTracker:
             self.onset_total += 1
             self.onset_flag = True
             self.onset_count += 1
+            self.recent.append(now)
             self._align(now)
         self._glide(now)
         if now - self.last_est > 0.5 and len(self.flux_hist) > self.FPS * 4:
@@ -634,10 +643,14 @@ class BeatTracker:
 
     # Beat events: each is the time at which a beat will (or did) land.
     # Locked mode looks ahead so every light can be scheduled at its own lead time.
-    def poll_events(self, now, lookahead, locked):
+    SNAP = 0.15     # pass-through: a grid beat moves to a real hit this close (fraction of a beat)
+
+    def poll_events(self, now, lookahead, locked, snap=False):
+        """Beat times (when each will be heard). `snap`: with pass-through the real hits are
+        already known before they are heard, so a grid beat moves onto a nearby real hit."""
         if not locked:
             fire, self.onset_flag = self.onset_flag, False
-            return [now] if fire else []
+            return [self.last_onset] if fire else []
         self.onset_flag = False
         if self.t0 is None or now - self.last_onset > 2.5:
             return []
@@ -646,6 +659,10 @@ class BeatTracker:
         beat = self.t0 + np.floor((tt - self.t0) / T) * T
         if beat > self.last_fired + 0.5 * T:
             self.last_fired = beat
+            if snap:
+                near = [h for h in self.recent if abs(h - beat) <= self.SNAP * T]
+                if near:
+                    return [min(near, key=lambda h: abs(h - beat))]
             return [beat]
         return []
 
@@ -713,6 +730,40 @@ def preview_color(hex_color):
     return {"ok": True}
 
 
+PASS_SPARE = 0.06
+
+
+def pass_delay(leads, spk_s):
+    """How long pass-through holds the music back (s): long enough for the slowest light
+    to light up on the hit, after allowing 40 ms to spot the hit and the speaker's own delay.
+    PASS_SPARE covers a light answering slower later on (real Tapo replies vary by ~90 ms)."""
+    need = (max(leads) if leads else 0.0) + 0.04 + PASS_SPARE - spk_s
+    return round(max(0.10, min(0.60, need)), 3)
+
+
+def light_lead(L, dcfg, cfg, mean_lat):
+    """How early (s) a light's command must go out so the light is seen on the beat."""
+    nudge = cfg["lead"] / 1000.0 + dcfg.get("offset", 0) / 1000.0
+    if dcfg.get("calib") is not None:
+        # calibrated: its live round trip plus the webcam-measured time it takes to visibly brighten
+        lead = L.lat + dcfg["calib"] / 1000.0 + nudge
+    else:
+        # slower-than-average lights fire earlier, faster ones later, so they land together
+        lead = nudge + max(-0.15, min(0.25, 0.5 * (L.lat - mean_lat)))
+    return max(-0.2, min(LOOKAHEAD - 0.05, lead))
+
+
+def outputs_info():
+    """For Settings > Sound: the speakers pass-through can play to, and whether BlackHole exists."""
+    try:
+        outs = audio_route.list_outputs()
+    except Exception:
+        return {"outputs": [], "blackhole": False}
+    return {"outputs": [{"uid": o["uid"], "name": o["name"], "latency_ms": o["latency_ms"],
+                         "builtin": o["builtin"]} for o in outs if not o["blackhole"]],
+            "blackhole": any(o["blackhole"] for o in outs)}
+
+
 class Engine:
     def __init__(self):
         self.cfg = load_config()
@@ -748,6 +799,9 @@ class Engine:
         self.connecting = False     # True while connecting to the lights
         self.audio_open = False     # True once the audio input is open
         self.dropped = []           # names of lights that stopped answering while playing
+        self.pass_delay = 0.0       # s the music is held back by pass-through (0 = off)
+        self.speaker = ""           # speaker pass-through plays to
+        self.speaker_lost = ""      # speaker it fell back to after the chosen one went away
 
     def restart(self):
         """Stop, wait until the engine thread has really finished, then start again —
@@ -791,6 +845,8 @@ class Engine:
             self.dropped = []
             self.lamps = []
             self.preview = None
+            self.pass_delay = 0.0
+            self.speaker = self.speaker_lost = ""
             self.running = False
 
     async def _send(self, light, b, hue, sat):
@@ -925,21 +981,88 @@ class Engine:
         if problems:
             self.error = "Skipped: " + " | ".join(problems)
 
+        pt = self._start_passthrough(c, lights, sd) if c.get("passthru") else None
+        try:
+            await self._listen(lights, c, sd, pt)
+        finally:
+            self._stop_passthrough(pt)
+
+    def _save_restore(self, uid):
+        """Remember (in settings, so it survives a crash) which output to put back."""
+        with CONFIG_LOCK:
+            self.cfg = dict(self.cfg, restore_out=uid)
+            save_config(self.cfg)
+
+    def _start_passthrough(self, c, lights, sd):
+        """Send the Mac's sound to BlackHole and start playing it, delayed, to the speaker.
+        Returns what _listen and _stop_passthrough need."""
+        live = c["devices"]
+        mean_lat = sum(L.lat for L in lights) / len(lights)
+        leads = [light_lead(L, live[L.idx] if L.idx < len(live) else {}, c, mean_lat) for L in lights]
+        bh_in = next((i for i, d in enumerate(sd.query_devices())
+                      if d["name"].startswith("BlackHole") and d["max_input_channels"] >= 2), None)
+        if bh_in is None:
+            raise RuntimeError(audio_route.NO_BLACKHOLE_MSG)
+        prev = audio_route.switch_to_blackhole(self._save_restore)
+        pt = {"prev": prev, "vol": None, "player": None}
+        try:
+            spk = audio_route.pick_speaker(c.get("out_device", ""), prev)
+            if spk is None:
+                raise RuntimeError("No speaker found to play the music on.")
+            spk_s = c.get("spk_delay", {}).get(spk["uid"], spk["latency_ms"]) / 1000.0
+            delay = pass_delay(leads, spk_s)
+            builtin = audio_route.pick_speaker("", "")
+            fallback = builtin["name"] if builtin and builtin["uid"] != spk["uid"] else None
+            line = passthrough.DelayLine(SAMPLE_RATE, delay)
+            pt["vol"] = audio_route.take_over_volume(spk["uid"])
+            pt["player"] = player = passthrough.Player(sd, spk["name"], fallback, line, SAMPLE_RATE)
+            player.start()
+            out_lat = float(getattr(player.stream, "latency", 0.0) or 0.0)
+        except BaseException:
+            self._stop_passthrough(pt)
+            raise
+        # the moment a sound coming in now will be heard
+        pt.update(line=line, dev=bh_in, offset=delay + max(spk_s, out_lat))
+        self.pass_delay, self.speaker = delay, spk["name"]
+        return pt
+
+    def _stop_passthrough(self, pt):
+        if not pt:
+            return
+        for step in (lambda: pt["player"] and pt["player"].close(),
+                     lambda: audio_route.give_back_volume(pt["vol"]),
+                     lambda: audio_route.restore_output(pt["prev"], self._save_restore)):
+            try:
+                step()
+            except Exception as e:
+                self.error = f"Couldn't put the sound back to your speaker: {e}"
+        self.pass_delay, self.speaker, self.speaker_lost = 0.0, "", ""
+
+    async def _listen(self, lights, c, sd, pt):
         tracker = BeatTracker()
 
         def callback(indata, frames, t, status):
             tracker.steady = self.cfg.get("steady", True)
-            tracker.process(indata[:, 0].astype(np.float32), self.cfg["sensitivity"])
+            if pt:
+                pt["line"].push(indata)
+                tracker.process(indata.mean(axis=1).astype(np.float32), self.cfg["sensitivity"],
+                                now=time.time() + pt["offset"])
+            else:
+                tracker.process(indata[:, 0].astype(np.float32), self.cfg["sensitivity"])
 
-        dev = c["device"]
-        dev = int(dev) if str(dev).isdigit() else (dev or None)
+        if pt:
+            dev, channels = pt["dev"], 2
+        else:
+            dev, channels = c["device"], 1
+            dev = int(dev) if str(dev).isdigit() else (dev or None)
+        look = pt["offset"] - 0.04 if pt else LOOKAHEAD
         beat_n = 0
         events = deque(maxlen=16)
         ui_beats = deque(maxlen=16)
         last_t = time.time()
         t_start = time.time()
         loud_t = time.time()
-        with sd.InputStream(device=dev, channels=1, samplerate=SAMPLE_RATE,
+        with sd.InputStream(device=dev, channels=channels, samplerate=SAMPLE_RATE,
                             blocksize=BLOCK, callback=callback):
             self.audio_open = True
             while not self.stop_evt.is_set():
@@ -962,7 +1085,10 @@ class Engine:
                     continue
                 self.calib_q.clear()
 
-                for bt in tracker.poll_events(now, LOOKAHEAD, cfg["lock"]):
+                if pt:
+                    pt["player"].check()
+                    self.speaker_lost = pt["player"].fell_back or ""
+                for bt in tracker.poll_events(now, look, cfg["lock"], snap=bool(pt)):
                     beat_n += 1
                     events.append((bt, beat_n))
                     ui_beats.append(bt)
@@ -993,20 +1119,12 @@ class Engine:
                 lamps = []
                 for k, L in enumerate(lights):
                     dcfg = live[L.idx] if L.idx < len(live) else {}
-                    nudge = cfg["lead"] / 1000.0 + dcfg.get("offset", 0) / 1000.0
-                    if dcfg.get("calib") is not None:
-                        # calibrated: fire early by this light's live round trip plus the
-                        # webcam-measured time the bulb takes to visibly brighten
-                        lead = L.lat + dcfg["calib"] / 1000.0 + nudge
-                    else:
-                        # slower-than-average lights fire earlier, faster ones later, so they land together
-                        lead = nudge + max(-0.15, min(0.25, 0.5 * (L.lat - mean_lat)))
-                    lead = max(-0.2, min(LOOKAHEAD - 0.05, lead))
+                    lead = light_lead(L, dcfg, cfg, mean_lat)
 
                     fired = False
                     for bt, idx in events:
                         if idx > L.last_idx and bt - lead <= now:
-                            L.last_idx = idx
+                            L.last_idx, L.last_bt = idx, bt
                             if cfg["multi"] == "sync" or n == 1 or (idx - 1) % n == k:
                                 fired = True
                     if fired or manual:
@@ -1036,7 +1154,10 @@ class Engine:
                         self.bpm, self.brightness = tracker.bpm, b
                     changed = (b, hue, sat) != L.last_sent
                     # keep the link free just before this light's next peak so the peak isn't queued behind a fade step
-                    soon = (tn is not None and 0 < tn - lead < L.lat + 0.04 and b < L.last_sent[0])
+                    # (also when that beat is due but not yet announced, which happens with
+                    # pass-through if a light's replies got slower; not if it already flashed for it)
+                    soon = (tn is not None and tn - lead < L.lat + 0.04 and b < L.last_sent[0]
+                            and abs(L.last_bt - (now + tn)) > 0.08)
                     if changed and not soon and not L.busy and now - L.last_send_t >= L.min_gap:
                         L.busy = True   # each light sends on its own, in parallel
                         task = asyncio.create_task(self._send(L, b, hue, sat))
@@ -1058,6 +1179,7 @@ class Light:
         self.hue_now = None
         self.last_sent = (-1, -1, -1)
         self.last_send_t = 0.0
+        self.last_bt = 0.0   # time of the last beat this light flashed for
         self.busy = False
         self.min_gap = 0.07  # s between commands
         self.fails = 0       # commands failed in a row
@@ -1100,6 +1222,8 @@ def status_text(st):
             return "Ready · press Play", "idle"
         if err.startswith(RESTORE_MSG):
             return err, "warn"
+        if err.startswith(audio_route.NO_BLACKHOLE_MSG):
+            return audio_route.NO_BLACKHOLE_MSG, "error"
         if SECOND_COPY_MSG in err:
             return SECOND_COPY_MSG, "error"
         if "need your Tapo account" in err:
@@ -1120,6 +1244,8 @@ def status_text(st):
         return "Starting to listen…", "wait"
     if err == SILENT_MSG or st.get("db", 0) <= -90:
         return "Can't hear any music. Check the audio input in Settings > Sound.", "warn"
+    if st.get("speaker_lost"):
+        return f"Your speaker disconnected · playing on {st['speaker_lost']}", "warn"
     dropped = st.get("dropped") or []
     if dropped:
         names = dropped[0] if len(dropped) == 1 else ", ".join(dropped[:-1]) + " and " + dropped[-1]
@@ -1129,9 +1255,10 @@ def status_text(st):
     if missing:
         names = missing[0] if len(missing) == 1 else ", ".join(missing[:-1]) + " and " + missing[-1]
         return f"{names} didn't answer · {_plural(st['lights'], 'light')} playing", "warn"
+    late = f" · sound delayed {st['pass_delay']:.1f} s" if st.get("pass_delay") else ""
     if st.get("locked") and st.get("onsets"):
-        return f"Listening · {_plural(st['lights'], 'light')} · on the beat", "ok"
-    return f"Finding the beat · {_plural(st['lights'], 'light')}", "wait"
+        return f"Listening · {_plural(st['lights'], 'light')} · on the beat{late}", "ok"
+    return f"Finding the beat · {_plural(st['lights'], 'light')}{late}", "wait"
 
 
 def _light_set(devices):
@@ -1168,7 +1295,20 @@ def _apply_config_locked(body):
     new["lock"] = bool(new["lock"])
     new["steady"] = bool(new["steady"])
     new["lead"] = max(-150, min(250, int(new["lead"])))
-    relist = _light_set(new["devices"]) != _light_set(ENGINE.cfg["devices"])
+    new["passthru"] = bool(new["passthru"])
+    new["out_device"] = str(new["out_device"] or "")
+    spk = {}
+    for uid, ms in (new["spk_delay"] if isinstance(new["spk_delay"], dict) else {}).items():
+        try:
+            if uid:
+                spk[str(uid)] = max(0, min(400, int(ms)))
+        except (TypeError, ValueError):
+            pass
+    new["spk_delay"] = spk
+    new["restore_out"] = ENGINE.cfg.get("restore_out", "")    # only the engine writes this
+    relist = (_light_set(new["devices"]) != _light_set(ENGINE.cfg["devices"])
+              or new["passthru"] != ENGINE.cfg.get("passthru", False)
+              or (new["passthru"] and new["out_device"] != ENGINE.cfg.get("out_device", "")))
     ENGINE.cfg = new
     save_config(new)
     return relist
@@ -1210,7 +1350,8 @@ class Handler(BaseHTTPRequestHandler):
                 "dropped": ENGINE.dropped,
                 "locked": ENGINE.locked, "missing": ENGINE.missing,
                 "beats": ENGINE.beats, "color": live_color_hex(ENGINE.cfg, ENGINE.bpm or 110),
-                "lamps": ENGINE.lamps}
+                "lamps": ENGINE.lamps, "pass_delay": ENGINE.pass_delay,
+                "speaker": ENGINE.speaker, "speaker_lost": ENGINE.speaker_lost}
         out["status"], out["status_level"] = status_text(out)
         return out
 
@@ -1242,6 +1383,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, serve_ui(name), UI_TYPES[name.rsplit(".", 1)[1]])
         elif self.path == "/api/state":
             self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/outputs":
+            self._send(200, json.dumps(outputs_info()))
         elif self.path == "/api/devices":
             self._send(200, json.dumps(list_inputs()))
         elif self.path == "/api/scan":
@@ -1306,12 +1449,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
+def recover_sound_output():
+    """At launch: if Temponome last stopped without putting the Mac's sound back (a crash
+    while playing music through it), put it back now."""
+    try:
+        audio_route.recover(ENGINE.cfg, ENGINE._save_restore)
+    except Exception:
+        pass
+
+
 def make_server(port):
     """The local web server the windows talk to (only reachable from this Mac)."""
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
 def main():
+    recover_sound_output()
     server = make_server(PORT)
     url = f"http://127.0.0.1:{PORT}"
     print(f"Temponome running at {url}  (Ctrl+C to quit)")

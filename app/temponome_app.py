@@ -182,6 +182,7 @@ def on_main_closed(server, shutdown=shutdown_all, exit=os._exit):
 
 def run():
     import webview
+    temponome.recover_sound_output()
     server = start_server(8765)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"

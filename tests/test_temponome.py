@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.request
 
@@ -567,6 +568,119 @@ class DelayedSound(unittest.TestCase):
         out = np.zeros((512, 2), np.float32)
         FakeOut.made[0].cb(out, 512, None, None)
         self.assertAlmostEqual(float(out[-1, 1]), 0.25)
+
+
+class PassThroughEngine(unittest.TestCase):
+    def test_pass_delay_formula(self):
+        self.assertAlmostEqual(T.pass_delay([0.10, 0.31], 0.014), 0.396)   # 60 ms spare for slower replies
+        self.assertAlmostEqual(T.pass_delay([0.0], 0.2), 0.10)      # never shorter than 0.1 s
+        self.assertAlmostEqual(T.pass_delay([0.9], 0.0), 0.60)      # never longer than 0.6 s
+        self.assertAlmostEqual(T.pass_delay([], 0.0), 0.10)
+
+    def test_unlocked_emits_onset_time(self):
+        tr = T.BeatTracker()
+        tr.onset_flag, tr.last_onset = True, 105.3        # hit heard at 105.3 (sound delayed)
+        self.assertEqual(tr.poll_events(105.0, 0.3, False), [105.3])
+
+    def grid(self):
+        tr = T.BeatTracker()
+        tr.bpm, tr.t0, tr.last_onset, tr.last_fired = 120.0, 100.0, 100.0, 100.0
+        return tr
+
+    def test_snap_moves_beat_to_real_hit(self):
+        tr = self.grid()
+        tr.recent.append(100.56)
+        self.assertAlmostEqual(tr.poll_events(100.0, 0.6, True, snap=True)[0], 100.56)
+
+    def test_snap_ignores_far_hits(self):
+        tr = self.grid()
+        tr.recent.append(100.7)
+        self.assertAlmostEqual(tr.poll_events(100.0, 0.6, True, snap=True)[0], 100.5)
+
+    def test_no_snap_without_pass_through(self):
+        tr = self.grid()
+        tr.recent.append(100.56)
+        self.assertAlmostEqual(tr.poll_events(100.0, 0.6, True)[0], 100.5)
+
+    def apply(self, body, playing=False, start=None):
+        reset_home()
+        old_cfg, old_want, old_restart = T.ENGINE.cfg, T.ENGINE.want_running, T.ENGINE.restart
+        calls = []
+        try:
+            T.ENGINE.cfg = T.load_config()
+            T.ENGINE.cfg["restore_out"] = "MBA"
+            T.ENGINE.cfg.update(start or {})
+            T.ENGINE.want_running = playing
+            T.ENGINE.restart = lambda: calls.append(1)
+            T.apply_config(body)
+            time.sleep(0.05)
+            return dict(T.ENGINE.cfg), calls
+        finally:
+            T.ENGINE.cfg, T.ENGINE.want_running, T.ENGINE.restart = old_cfg, old_want, old_restart
+
+    def test_settings_validate(self):
+        cfg, _ = self.apply({"passthru": 1, "out_device": 5, "restore_out": "EVIL",
+                             "spk_delay": {"MBA": 999, "JBL": -5, "X": "a", "": 3}})
+        self.assertIs(cfg["passthru"], True)
+        self.assertEqual(cfg["out_device"], "5")
+        self.assertEqual(cfg["spk_delay"], {"MBA": 400, "JBL": 0})
+        self.assertEqual(cfg["restore_out"], "MBA")          # pages can't change this
+
+    def test_defaults(self):
+        self.assertIs(T.DEFAULTS["passthru"], False)
+        self.assertEqual(T.DEFAULTS["spk_delay"], {})
+
+    def test_toggle_while_playing_restarts(self):
+        self.assertEqual(self.apply({"passthru": True}, playing=True)[1], [1])
+        self.assertEqual(self.apply({"out_device": "JBL"}, playing=True, start={"passthru": True})[1], [1])
+        self.assertEqual(self.apply({"out_device": "JBL"}, playing=True)[1], [])    # pass-through off
+        self.assertEqual(self.apply({"spk_delay": {"MBA": 50}}, playing=True, start={"passthru": True})[1], [])
+        self.assertEqual(self.apply({"passthru": True}, playing=False)[1], [])
+
+    def st(self, **kw):
+        base = {"running": True, "lights": 3, "locked": True, "onsets": 5, "audio_open": True,
+                "connecting": False, "db": -20}
+        base.update(kw)
+        return T.status_text(base)
+
+    def test_status_mentions_delay(self):
+        self.assertEqual(self.st(pass_delay=0.336),
+                         ("Listening · 3 lights · on the beat · sound delayed 0.3 s", "ok"))
+        self.assertEqual(self.st(), ("Listening · 3 lights · on the beat", "ok"))
+
+    def test_status_speaker_lost(self):
+        self.assertEqual(self.st(pass_delay=0.3, speaker_lost="MacBook Air Speakers"),
+                         ("Your speaker disconnected · playing on MacBook Air Speakers", "warn"))
+
+    def test_status_no_blackhole(self):
+        import audio_route
+        self.assertEqual(T.status_text({"running": False, "error": audio_route.NO_BLACKHOLE_MSG}),
+                         (audio_route.NO_BLACKHOLE_MSG, "error"))
+
+    def test_launch_puts_sound_back_after_a_crash(self):
+        import audio_route as AR
+        reset_home()
+        old, AR.BACKEND = AR.BACKEND, FakeBackend()
+        old_cfg = T.ENGINE.cfg
+        try:
+            T.ENGINE.cfg = dict(T.load_config(), restore_out="MBA")
+            AR.BACKEND.cur = 1                              # still on BlackHole
+            T.recover_sound_output()
+            self.assertEqual(AR.BACKEND.cur, 2)
+            self.assertEqual(T.load_config()["restore_out"], "")
+        finally:
+            AR.BACKEND, T.ENGINE.cfg = old, old_cfg
+
+    def test_outputs_route_hides_blackhole(self):
+        import audio_route as AR
+        old, AR.BACKEND = AR.BACKEND, FakeBackend()
+        try:
+            out = T.outputs_info()
+        finally:
+            AR.BACKEND = old
+        self.assertTrue(out["blackhole"])
+        self.assertEqual([o["uid"] for o in out["outputs"]], ["MBA", "JBL"])
+        self.assertEqual(out["outputs"][1]["latency_ms"], 160.0)
 
 
 class ColorBlend(unittest.TestCase):

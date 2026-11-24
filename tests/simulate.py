@@ -37,6 +37,7 @@ SR = 44100
 
 
 CLOCK = {}   # wall time at which the synthetic song started
+OUTPUTS = []  # fake speaker streams opened by pass-through
 FAILING = set()   # fake Tapo IPs whose commands fail (a bulb unplugged mid-song)
 
 
@@ -72,13 +73,13 @@ def install_fakes(sent, song):
 
     class Stream:
         def __init__(s, device, channels, samplerate, blocksize, callback):
-            s.cb, s.run = callback, True
+            s.cb, s.run, s.ch = callback, True, channels
         def __enter__(s):
             def feed():
                 t0, k = time.time(), 0
                 CLOCK["t0"] = t0
                 while s.run:
-                    s.cb(song(k * 512 / SR)[:, None], 512, None, None)
+                    s.cb(np.repeat(song(k * 512 / SR)[:, None], s.ch, axis=1), 512, None, None)
                     k += 1
                     d = t0 + k * 512 / SR - time.time()
                     if d > 0:
@@ -88,7 +89,17 @@ def install_fakes(sent, song):
         def __exit__(s, *a): s.run = False
 
     sys.modules["tapo"] = types.SimpleNamespace(ApiClient=Api)
-    sys.modules["sounddevice"] = types.SimpleNamespace(InputStream=Stream, query_devices=lambda: [])
+    class OutStream:
+        def __init__(s, device, channels, samplerate, blocksize, callback, finished_callback):
+            s.device, s.cb, s.active, s.latency = device, callback, True, 0.01
+            OUTPUTS.append(s)
+        def start(s): pass
+        def close(s): s.active = False
+
+    devices = [{"name": "BlackHole 2ch", "max_input_channels": 2, "max_output_channels": 2},
+               {"name": "MacBook Air Speakers", "max_input_channels": 0, "max_output_channels": 2}]
+    sys.modules["sounddevice"] = types.SimpleNamespace(InputStream=Stream, OutputStream=OutStream,
+                                                       query_devices=lambda: devices)
 
 
 def make_song(amp, bpm, hp):
@@ -271,6 +282,54 @@ def run_govee_checks(bpm=120):
     return ok_all
 
 
+class FakeRoute:
+    """CoreAudio stand-in: BlackHole and the MacBook speakers (default)."""
+    def __init__(self):
+        self.devs = [{"id": 1, "uid": "BH", "name": "BlackHole 2ch", "transport": "virt", "latency_ms": 0.0},
+                     {"id": 2, "uid": "MBA", "name": "MacBook Air Speakers", "transport": "bltn", "latency_ms": 14.0}]
+        self.cur, self.db = 2, {1: 0.0, 2: -10.0}
+    def devices(self): return [dict(d) for d in self.devs]
+    def default(self): return self.cur
+    def set_default(self, i): self.cur = i
+    def volume(self, i): return 1.0
+    def set_volume(self, i, v): pass
+    def volume_db(self, i): return self.db[i]
+    def set_volume_db(self, i, d): self.db[i] = d
+
+
+def run_passthrough_checks(bpm=120, calib=100):
+    """Music plays through Temponome: the light lights up when the kick is heard."""
+    sent = collections.defaultdict(list)
+    app = load_app(sent, make_song(0.08, bpm, False))
+    import audio_route
+    route = audio_route.BACKEND = FakeRoute()
+    OUTPUTS.clear()
+    e = app.Engine()
+    e.cfg.update(email="a", password="b", lock=True, minB=10, maxB=100, smooth=0.1, lead=0, passthru=True,
+                 devices=[{"ip": "1.1.1.1", "model": "l530", "color": "blend", "offset": 0, "calib": calib}])
+    e.start()
+    time.sleep(3)
+    switched, delay, speaker = route.cur, e.pass_delay, e.speaker
+    out = OUTPUTS[-1] if OUTPUTS else None
+    time.sleep(9)
+    P = 60 / bpm
+    rows = [(t, b) for t, b, h in sent["1.1.1.1"] if t > time.time() - 5]
+    e.stop()
+    time.sleep(0.5)
+    heard = delay + 0.014                       # speaker delay (reported 14 ms) beats the 10 ms buffer
+    peaks = [t for (t, b), (_, pb) in zip(rows[1:], rows[:-1]) if b >= 90 and pb < 90]
+    # the command lands, then the bulb takes `calib` to visibly light up
+    ph = [((t + calib / 1000 - heard - CLOCK["t0"]) + P / 2) % P - P / 2 for t in peaks]
+    med = float(np.median(ph)) if ph else None
+    ok = (switched == 1 and route.cur == 2 and speaker == "MacBook Air Speakers" and out is not None
+          and not out.active and 0.1 <= delay <= 0.6 and med is not None and abs(med) < 0.03
+          and e.cfg["restore_out"] == "" and route.db[2] == -10.0)
+    print(f"{'PASS' if ok else 'FAIL'}  pass-through -> output switched to BlackHole {switched == 1}, put back {route.cur == 2}, "
+          f"delay {delay * 1000:.0f} ms, light seen {'-' if med is None else f'{med * 1000:+.0f}'} ms from the heard kick "
+          f"(expect ~0), {len(peaks)} flashes")
+    return ok
+
+
 def run_restore_checks():
     """Stop puts every light back the way it looked before Play."""
     lamp = FakeGovee()
@@ -441,5 +500,6 @@ if __name__ == "__main__":
     results.append(run_slow_light_checks())
     results.append(run_dropout_checks())
     results.append(run_restore_checks())
+    results.append(run_passthrough_checks())
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)
