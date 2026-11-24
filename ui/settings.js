@@ -279,6 +279,10 @@ $('preview').onclick = async () => {
   $('pvMsg').textContent = r.ok ? 'Showing it on your lights for a moment.' : r.error;
   clearTimeout($('pvMsg').t); $('pvMsg').t = setTimeout(() => { $('pvMsg').textContent = ''; }, 4000);
 };
+for (const id of ['accent', 'drops']) {
+  $(id).onclick = () => { const on = $(id).getAttribute('aria-checked') !== 'true'; $(id).setAttribute('aria-checked', on); cfg[id] = on; T.saveCfg({ [id]: on }); };
+}
+$('barShift').onchange = () => { cfg.bar_shift = +$('barShift').value; T.saveCfg({ bar_shift: cfg.bar_shift }); };
 document.querySelectorAll('input[name=pulse]').forEach(r => r.onchange = () => {
   cfg.pulse = r.value; T.saveCfg({ pulse: r.value }); showMode(); renderDevs();
 });
@@ -516,6 +520,8 @@ async function init() {
   $('device').value = cfg.device;
   document.querySelector(`input[name=mode][value=${cfg.mode}]`).checked = true;
   document.querySelector(`input[name=pulse][value=${cfg.pulse || 'brightness'}]`).checked = true;
+  $('accent').setAttribute('aria-checked', !!cfg.accent); $('drops').setAttribute('aria-checked', !!cfg.drops);
+  $('barShift').value = String(cfg.bar_shift || 0);
   $('lock').setAttribute('aria-checked', !!cfg.lock);
   $('steady').setAttribute('aria-checked', cfg.steady !== false);
   outs = await T.api('/api/outputs');

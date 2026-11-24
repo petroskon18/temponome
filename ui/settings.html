@@ -91,6 +91,15 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
   <div class="row"><label class="grow"><input type="radio" name="pulse" value="brightness"> Brightness: the light flashes brighter</label></div>
   <div class="row"><label class="grow"><input type="radio" name="pulse" value="color"> Color: the light jumps from the calm to the energetic color and fades back, at steady brightness</label></div>
  </div>
+ <h2>Extras</h2>
+ <div class="group">
+  <div class="row"><span class="grow" id="accentLbl">Stronger flash on the first beat of each bar<br><span class="hint" style="margin:0">Beats 2, 3 and 4 flash softer</span></span>
+   <span class="switch"><button class="track" id="accent" role="switch" aria-labelledby="accentLbl" aria-checked="false"><span class="knob"></span></button></span></div>
+  <div class="row"><label for="barShift" class="grow">Turn the colors around the wheel<br><span class="hint" style="margin:0">Both colors move a step together, so the pair stays matched</span></label>
+   <select id="barShift"><option value="0">Never</option><option value="4">Every 4 bars</option><option value="8">Every 8 bars</option></select></div>
+  <div class="row"><span class="grow" id="dropsLbl">Build-ups and drops<br><span class="hint" style="margin:0">When the drums go away the lights dim and rise with the music; when the beat comes back they burst</span></span>
+   <span class="switch"><button class="track" id="drops" role="switch" aria-labelledby="dropsLbl" aria-checked="false"><span class="knob"></span></button></span></div>
+ </div>
  <div id="tempoColors">
  <h2>How colors change</h2>
  <div class="group">

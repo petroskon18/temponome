@@ -122,6 +122,89 @@ def make_drums(bpm):
     return song
 
 
+def make_bars(bpm, gap=None):
+    """Kick on every beat, the first of each 4-beat bar louder; `gap` = (from, to) seconds of
+    song time with no drums (a breakdown), only a soft pad."""
+    P = 60 / bpm
+    n = int(round(P * SR))
+    t = np.arange(n) / SR
+    kick = np.sin(2 * np.pi * (50 + 80 * np.exp(-t * 30)) * t) * np.exp(-t * 14)
+
+    def song(t0):
+        i0 = int(round(t0 * SR))
+        idx = i0 + np.arange(512)
+        beat = idx // n
+        x = kick[idx % n] * np.where(beat % 4 == 0, 0.6, 0.3)
+        if gap:
+            x = np.where((idx / SR >= gap[0]) & (idx / SR < gap[1]), 0.0, x)
+        pad = 0.05 * np.sin(2 * np.pi * 330 * idx / SR)
+        return (x + pad + 0.003 * np.random.randn(512)).astype(np.float32)
+    return song
+
+
+def bars_engine(sent, song, **cfg):
+    app = load_app(sent, song)
+    import audio_route
+    audio_route.BACKEND = FakeRoute()
+    e = app.Engine()
+    e.cfg.update(email="a", password="b", lock=True, minB=10, maxB=100, smooth=0.05, passthru=True,
+                 devices=[{"ip": "1.1.1.1", "model": "l530", "color": "blend", "offset": 0, "calib": 100}])
+    e.cfg.update(cfg)
+    return e
+
+
+def run_accent_checks(bpm=120):
+    """Beat 1 of each bar flashes fully, beats 2-4 softer."""
+    sent = collections.defaultdict(list)
+    e = bars_engine(sent, make_bars(bpm), accent=True)
+    e.start()
+    time.sleep(16)
+    rows = [b for t, b, h in sent["1.1.1.1"] if t > time.time() - 6]
+    e.stop()
+    time.sleep(0.4)
+    peaks = [b for a, b, c in zip(rows, rows[1:], rows[2:]) if b > a and b >= c and b >= 40]
+    strong = sum(1 for b in peaks if b >= 90)
+    soft = sum(1 for b in peaks if b <= 70)
+    ok = len(peaks) >= 8 and 0.15 <= strong / max(len(peaks), 1) <= 0.4 and soft >= 2 * strong - 1
+    print(f"{'PASS' if ok else 'FAIL'}  stronger beat 1 -> {strong} full flashes, {soft} softer, of {len(peaks)} "
+          f"(expect about 1 in 4 full): {peaks}")
+    return ok
+
+
+def run_bar_color_checks(bpm=120):
+    """With colors turning every 4 bars (8 s at 120 BPM), the light's hue moves 45 degrees."""
+    sent = collections.defaultdict(list)
+    e = bars_engine(sent, make_bars(bpm), bar_shift=4, colorA="#ff0000", colorB="#ff0000", mode="fixed")
+    e.start()
+    time.sleep(22)
+    hues = [h for t, b, h in sent["1.1.1.1"]]
+    e.stop()
+    time.sleep(0.4)
+    seen = sorted(set(hues))
+    ok = any(abs(h - 44) <= 4 or abs(h - 88) <= 4 for h in seen) and 0 in seen
+    print(f"{'PASS' if ok else 'FAIL'}  colors turn every 4 bars -> hues seen {seen} (expect 0, then ~44)")
+    return ok
+
+
+def run_drop_checks(bpm=120):
+    """Drums stop for 8 s (a breakdown) then come back: dim meanwhile, full burst on the drop."""
+    sent = collections.defaultdict(list)
+    e = bars_engine(sent, make_bars(bpm, gap=(14, 22)), drops=True)
+    e.start()
+    time.sleep(27)
+    t0 = CLOCK["t0"]
+    rows = [(t - t0, b) for t, b, h in sent["1.1.1.1"]]
+    e.stop()
+    time.sleep(0.4)
+    during = [b for t, b in rows if 18 < t < 21.5]
+    after = [(t, b) for t, b in rows if 22 < t < 23.5]
+    burst = [t for t, b in after if b == 100]
+    ok = during and max(during) <= 40 and burst and len([1 for t, b in after if b >= 90]) >= 2
+    print(f"{'PASS' if ok else 'FAIL'}  build-up and drop -> brightest during the breakdown {max(during) if during else '-'} "
+          f"(expect <= 40), after the drop {[b for _, b in after]} (expect a full, longer flash)")
+    return ok
+
+
 def make_song(amp, bpm, hp):
     hb, ha = butter(2, 150 / (SR / 2), "high")
     state = {"zi": lfilter_zi(hb, ha) * 0}
@@ -571,5 +654,8 @@ if __name__ == "__main__":
     results.append(run_passthrough_checks())
     results.append(run_color_pulse_checks())
     results.append(run_sound_light_checks())
+    results.append(run_accent_checks())
+    results.append(run_bar_color_checks())
+    results.append(run_drop_checks())
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)

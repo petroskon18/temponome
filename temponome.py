@@ -61,6 +61,9 @@ DEFAULTS = {
     "lead": 60,            # ms to fire early to cover bulb lag
     "smooth": 0.4,         # 0 = snappy short pulses, 1 = long smooth pulses
     "pulse": "brightness", # what a beat changes: "brightness" or "color" (calm A -> energetic B)
+    "accent": False,       # stronger flash on the first beat of each bar
+    "bar_shift": 0,        # turn the colors around the wheel every 4 or 8 bars (0 = off)
+    "drops": False,        # dim during build-ups, burst when the beat drops
 }
 
 
@@ -476,6 +479,23 @@ class BeatTracker:
         self.onset_flag = False
         self.onset_count = 0
         self.recent = deque(maxlen=8)   # times of the latest hits (for snapping in pass-through)
+        # bars: count beats in fours and learn which of the four hits hardest (= beat 1)
+        self.beat_count = 0
+        self.last_counted = 0.0
+        self.pos_score = [0.0] * 4
+        self.down = 0
+        self.last_downbeat = False   # was the last scheduled beat the first of its bar?
+        self.bar_n = 0               # bars so far
+        self.pending = deque()       # (beat time, position) waiting to be measured
+        self.bass_t = deque(maxlen=int(self.FPS * 1.0))   # (time, bass energy)
+        # build-ups and drops: the kick drum goes away for a while, then comes back hard
+        self.bass_fast = self.bass_slow = 0.0
+        self.breakdown = False
+        self.low_since = None
+        self.drop_ref = 0.0
+        self.break_t = 0.0
+        self.drops = deque(maxlen=8)   # times of drops (as heard)
+        self.drop_t0 = None      # when listening started (for the warm-up)
         self.cand, self.cand_n = 0.0, 0
         self.shift_left = 0.0      # phase correction still to apply, gently (s)
         self.grid_t = 0.0          # when the current grid was started
@@ -485,7 +505,7 @@ class BeatTracker:
 
     # called from the audio thread for every block
     def process(self, block, sens, now=None):
-        now = now or time.time()
+        now = time.time() if now is None else now
         self.ring = np.concatenate([self.ring[len(block):], block])
         mag = np.abs(np.fft.rfft(self.ring * np.hanning(self.win)))
         band = np.log1p(mag[self.mask] * 10.0)
@@ -505,6 +525,9 @@ class BeatTracker:
         # detector 1: bass energy jumps above its recent average
         avg = float(np.mean(self.bass_hist)) if len(self.bass_hist) > 10 else 0.0
         self.bass_hist.append(bass)
+        self.bass_t.append((now, bass))
+        self._learn_bar(now)
+        self._watch_drops(bass, rms > 1e-5, now)
         hit_bass = avg > 0 and bass > avg * sens
         # detector 2: sudden rise in low/mid energy (works when the mic cuts deep bass)
         hit_flux = False
@@ -682,7 +705,7 @@ class BeatTracker:
         already known before they are heard, so a grid beat moves onto a nearby real hit."""
         if not locked:
             fire, self.onset_flag = self.onset_flag, False
-            return [self.last_onset] if fire else []
+            return [self._count_beat(self.last_onset)] if fire else []
         self.onset_flag = False
         if self.t0 is None or now - self.last_onset > 2.5:
             return []
@@ -694,9 +717,66 @@ class BeatTracker:
             if snap:
                 near = [h for h in self.recent if abs(h - beat) <= self.SNAP * T]
                 if near:
-                    return [min(near, key=lambda h: abs(h - beat))]
-            return [beat]
+                    beat = min(near, key=lambda h: abs(h - beat))
+            return [self._count_beat(beat)]
         return []
+
+    def _count_beat(self, t):
+        T = 60.0 / self.bpm
+        if self.last_counted and t - self.last_counted > 1.5 * T:
+            # beats were skipped (a quiet moment): count them, so the bar keeps its place
+            self.beat_count += int(round((t - self.last_counted) / T)) - 1
+        self.last_counted = t
+        pos = self.beat_count % 4
+        self.beat_count += 1
+        self.pending.append((t, pos))
+        self.last_downbeat = pos == self.down
+        if self.last_downbeat:
+            self.bar_n += 1
+        return t
+
+    def _learn_bar(self, now):
+        """Once a scheduled beat has been heard, score how hard the bass hit at that moment;
+        the position (of four) that keeps hitting hardest is taken as beat 1."""
+        while self.pending and self.pending[0][0] < now - 0.06:
+            t, pos = self.pending.popleft()
+            near = [b for bt, b in self.bass_t if abs(bt - t) < 0.06]
+            if not near:
+                continue
+            self.pos_score = [0.99 * x for x in self.pos_score]
+            self.pos_score[pos] += max(near)
+            best = int(np.argmax(self.pos_score))
+            if self.pos_score[best] > self.BAR_MARGIN * self.pos_score[self.down]:
+                self.down = best           # only move beat 1 when another beat is clearly stronger
+
+    BAR_MARGIN = 1.2
+    BREAK_LOW, BREAK_SECONDS, DROP_BACK = 0.3, 2.0, 0.6
+    BREAK_MAX = 90.0    # s: a longer "breakdown" is just a quiet part of the song
+
+    def _watch_drops(self, bass, audible, now):
+        """Breakdown: the bass falls below 30 % of its usual level for 2 s. Drop: it comes
+        back to 60 % of the level before the breakdown."""
+        a_fast, a_slow = 1.0 / (self.FPS * 0.5), 1.0 / (self.FPS * 15.0)
+        self.bass_fast += a_fast * (bass - self.bass_fast)
+        if not self.breakdown:
+            if self.drop_t0 is None:
+                self.drop_t0 = now
+            if now - self.drop_t0 < 4.0:          # warming up: learn the usual level first
+                self.bass_slow = self.bass_fast
+                return
+            self.bass_slow += a_slow * (bass - self.bass_slow)
+            if audible and self.bass_fast < self.BREAK_LOW * self.bass_slow:
+                self.low_since = self.low_since or now
+                if now - self.low_since > self.BREAK_SECONDS:
+                    self.breakdown, self.drop_ref, self.break_t = True, self.bass_slow, now
+            else:
+                self.low_since = None
+        elif self.bass_fast > self.DROP_BACK * self.drop_ref:
+            kick = self.last_hit.get("kick", 0.0)
+            self.drops.append(kick if now - kick < 0.5 else now)   # the hit that brought it back
+            self.breakdown, self.low_since = False, None
+        elif now - self.break_t > self.BREAK_MAX:
+            self.breakdown, self.low_since = False, None
 
     def time_to_next(self, now):
         if self.t0 is None or now - self.last_onset > 2.5:
@@ -745,6 +825,24 @@ def blend_colors(cfg, t):
     t = min(max(t, 0.0), 1.0)
     diff = ((hb - ha + 180) % 360) - 180
     return int(round(ha + diff * t)) % 360, int(round(sa + (sb - sa) * t))
+
+
+ACCENT_SOFT = 0.55      # beats 2-4 flash this hard when beat 1 is stronger
+BURST_SECONDS, BURST_HALF_LIFE = 1.0, 0.6   # the burst when the beat drops: full, then a slow fade
+BAR_TURN = 45      # degrees the colors turn around the wheel every few bars
+
+
+def turn_colors(cfg, steps):
+    """cfg with colors A and B both turned `steps` x BAR_TURN degrees around the wheel
+    (white stays white), for "change colors every few bars"."""
+    out = dict(cfg)
+    for k in ("colorA", "colorB"):
+        r, g, b = hex_to_rgb(cfg[k])
+        h, sat, v = colorsys.rgb_to_hsv(r, g, b)
+        if sat > 0:
+            r, g, b = colorsys.hsv_to_rgb((h + steps * BAR_TURN / 360.0) % 1.0, sat, v)
+            out[k] = "#%02x%02x%02x" % tuple(int(round(c * 255)) for c in (r, g, b))
+    return out
 
 
 PULSE_STEPS = 4     # color pulse fades through A, 3 colors between, and B
@@ -1132,6 +1230,8 @@ class Engine:
         beat_n = 0
         events = deque(maxlen=16)
         hits = {b: deque(maxlen=16) for b in tracker.hits}    # (time, number) per sound
+        drop_q = deque(maxlen=4)       # drop times (as heard) not yet shown by every light
+        bar_heard = 0                  # bar of the last beat heard (for turning colors)
         hit_n = 0
         ui_beats = deque(maxlen=16)
         last_t = time.time()
@@ -1165,14 +1265,16 @@ class Engine:
                     self.speaker_lost = pt["player"].fell_back or ""
                 for bt in tracker.poll_events(now, look, cfg["lock"], snap=bool(pt)):
                     beat_n += 1
-                    events.append((bt, beat_n))
-                    ui_beats.append(bt)
+                    events.append((bt, beat_n, tracker.last_downbeat))
+                    ui_beats.append((bt, tracker.bar_n))
+                while tracker.drops:                   # the beat came back after a breakdown
+                    drop_q.append(tracker.drops.popleft())
                 for b, q in tracker.hits.items():      # kick / snare / hi-hat hits for lights that follow one
                     while q:
                         hit_n += 1
                         hits[b].append((q.popleft(), hit_n))
-                while ui_beats and ui_beats[0] <= now:   # count a beat when it lands, for the platter
-                    ui_beats.popleft()
+                while ui_beats and ui_beats[0][0] <= now:   # count a beat when it lands, for the platter
+                    bar_heard = ui_beats.popleft()[1]
                     self.beats += 1
                 self.level, self.onsets, self.rms = tracker.level, tracker.onset_count, tracker.rms
                 if tracker.rms > 2e-5:
@@ -1188,6 +1290,9 @@ class Engine:
                 half_life = 0.08 + 0.45 * float(cfg["smooth"])
                 span = cfg["maxB"] - cfg["minB"]
                 peak = 0.6 + 0.4 * min(tracker.level * 1.5, 1.0)  # quiet music -> softer peaks
+                if cfg.get("drops") and tracker.breakdown:
+                    peak = 0.15 + 0.25 * min(tracker.level * 1.5, 1.0)  # build-up: dim, rising with the music
+                ccfg = turn_colors(cfg, bar_heard // cfg["bar_shift"]) if cfg.get("bar_shift") else cfg
                 mean_lat = sum(L.lat for L in lights) / n
                 tn = tracker.time_to_next(now) if cfg["lock"] else None
                 live = cfg["devices"]
@@ -1210,30 +1315,40 @@ class Engine:
                         ahead = [ht for ht, _ in hits[sound] if ht > now]
                         tn_l = (min(ahead) - now) if ahead else next_hit_in(hits[sound], now)
                     else:
-                        for bt, idx in events:
+                        for bt, idx, first in events:
                             if idx > L.last_idx and bt - lead <= now:
                                 L.last_idx, L.last_bt = idx, bt
                                 if cfg["multi"] == "sync" or n == 1 or (idx - 1) % n == k:
                                     fired = True
+                                    # stronger flash on beat 1 of each bar, softer on 2-4
+                                    L.hit = 1.0 if first or not cfg.get("accent") else ACCENT_SOFT
                         tn_l = tn
-                    if fired or manual:
+                    burst = False
+                    if cfg.get("drops"):
+                        for d in drop_q:
+                            if d > L.last_drop and d - lead <= now:
+                                L.last_drop, L.burst_until, burst = d, d + BURST_SECONDS, True
+                    in_burst = now < L.burst_until
+                    if burst or manual:
                         L.env = 1.0
+                    elif fired:
+                        L.env = 1.0 if sound in hits else L.hit
                     else:
-                        L.env *= 0.5 ** (dt / half_life)
+                        L.env *= 0.5 ** (dt / (BURST_HALF_LIFE if in_burst else half_life))
                         if no_beats and tracker.rms > 2e-5:   # fallback: follow loudness so the light never just sits
                             L.env = max(L.env, 0.7 * min(tracker.level * 2.0, 1.0))
-                    b = int(round((cfg["minB"] + span * L.env * peak) / 10.0) * 10)
+                    b = int(round((cfg["minB"] + span * L.env * (1.0 if in_burst else peak)) / 10.0) * 10)
                     b = max(1, min(100, b))
 
                     if cfg.get("pulse") == "color":
                         # color pulse: steady brightness, the beat moves the color A -> B and back
                         b = max(1, min(100, int(cfg["maxB"])))
-                        hue, sat = pulse_color(cfg, L.env)
+                        hue, sat = pulse_color(ccfg, L.env)
                         sat = max(1, min(100, sat))
                         L.hue_now = float(hue)
                     else:
                         which = dcfg.get("color", "blend")
-                        target_hue, sat = pick_color(cfg, tracker.bpm, which)
+                        target_hue, sat = pick_color(ccfg, tracker.bpm, which)
                         sat = max(1, min(100, sat))
                         if L.hue_now is None:
                             L.hue_now = float(target_hue)
@@ -1278,6 +1393,9 @@ class Light:
         self.last_send_t = 0.0
         self.last_bt = 0.0   # time of the last beat this light flashed for
         self.last_hit = 0    # number of the last kick/snare/hi-hat hit it flashed for
+        self.hit = 1.0       # how hard the next beat flash is (beat 1 vs 2-4)
+        self.last_drop = 0.0
+        self.burst_until = 0.0
         self.busy = False
         self.min_gap = 0.07  # s between commands
         self.fails = 0       # commands failed in a row
@@ -1391,6 +1509,9 @@ def _apply_config_locked(body):
     new["sensitivity"] = float(new["sensitivity"])
     new["smooth"] = float(new["smooth"])
     new["lock"] = bool(new["lock"])
+    new["accent"] = bool(new["accent"])
+    new["drops"] = bool(new["drops"])
+    new["bar_shift"] = new["bar_shift"] if new["bar_shift"] in (0, 4, 8) else 0
     if new["pulse"] not in ("brightness", "color"):
         new["pulse"] = "brightness"
     new["steady"] = bool(new["steady"])

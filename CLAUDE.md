@@ -87,14 +87,15 @@ anything they must do on their Mac, and keep the double-click launcher working.
   working until the owner has used the installed app for a while.
 - `tests/simulate.py`: runs the real `Engine` against fake lights and synthetic
   music (it mocks `tapo` and `sounddevice`). Use it to check any change to beat
-  detection or light timing: `python3 tests/simulate.py` should print `16/16 passed`
+  detection or light timing: `python3 tests/simulate.py` should print `19/19 passed`
   (7 music scenarios, calibration / on-beat, Govee with a fake lamp on 127.0.0.1, live
   light-list changes, a Tapo bulb that takes 30 s to answer, a light unplugged mid-song,
   Stop putting the lights back, pass-through landing the light on the heard kick,
-  color pulse, and one light per drum on a clean drum loop). It needs numpy and scipy. Stop any other Temponome first:
+  color pulse, one light per drum on a clean drum loop, a stronger beat 1, colors turning
+  every 4 bars, and a breakdown followed by a drop). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (112 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (123 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -202,6 +203,21 @@ anything they must do on their Mac, and keep the double-click launcher working.
    one round trip late. `next_hit_in` guesses the next hit from regular spacing so the bulb
    is kept free before it. On 8 real songs kicks came at about the beat rate; the snare
    band also catches some guitar/voice; 2× rise gave more false hits (kept 3×).
+
+14. **Bars** (Settings > Colors > Extras): every scheduled beat is counted in fours
+   (`_count_beat`; skipped beats in a quiet moment are counted too, so the bar keeps its place).
+   Once heard, each beat's bass is scored by position (decay 0.99 per beat); beat 1 = the
+   position that keeps hitting hardest, and it only moves when another is 20 % stronger
+   (`BAR_MARGIN`). On 8 real songs beat 1 moved 0–11 times per song (was 30–170 before the
+   skip counting and margin). `accent`: beats 2–4 flash at `ACCENT_SOFT` = 0.55.
+   `bar_shift` (0/4/8): both colors turn `BAR_TURN` = 45° every N bars (`turn_colors`).
+15. **Build-ups and drops** (`drops`): `_watch_drops` compares the bass level (0.5 s average)
+   with its usual level (15 s average, learned for 4 s first). Below 30 % for 2 s =
+   breakdown: lights dim (peak 0.15–0.4, rising with loudness). Back above 60 % of the level
+   before the breakdown = drop: every light bursts to full and fades slowly for 1 s.
+   A breakdown longer than 90 s (`BREAK_MAX`) is just a quiet part. Found on real tracks,
+   e.g. the long synth break in "Won't Get Fooled Again" (drop at 7:45). Lesson: a clock
+   that starts at 0 broke `now or time.time()` style checks; use `is None`.
 
 ## History and lessons
 - Nov 2026 real-bulb test: "off the beat" had two causes. The owner's settings (max

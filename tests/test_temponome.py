@@ -832,6 +832,113 @@ class SoundsApart(unittest.TestCase):
         self.assertEqual([d["sound"] for d in devs], ["hats", "beat", "beat"])
 
 
+def run_tracker(x, sr=44100, start=100.0):
+    """Feed audio to BeatTracker and poll it like the engine does; returns the tracker and the
+    beats it scheduled as (time, first beat of the bar?, bar number)."""
+    tr = T.BeatTracker()
+    beats = []
+    for k in range(len(x) // T.BLOCK):
+        now = start + k * T.BLOCK / sr
+        tr.process(x[k * T.BLOCK:(k + 1) * T.BLOCK].astype(np.float32), 1.5, now=now)
+        for bt in tr.poll_events(now, 0.0, True):
+            beats.append((bt, tr.last_downbeat, tr.bar_n))
+    return tr, beats
+
+
+def kick_loop(seconds, loud_first=True, gap=None, sr=44100, wobble=0.0):
+    """Kicks at 120 BPM (4 to a 2 s bar), the first of each bar twice as loud; `gap` = (from, to)
+    seconds with no drums (a breakdown), only a quiet pad."""
+    x = 0.01 * np.random.default_rng(4).standard_normal(int(seconds * sr))
+    x += 0.05 * np.sin(2 * np.pi * 330 * np.arange(len(x)) / sr)
+    for k in range(int(seconds / 0.5)):
+        at = k * 0.5
+        if gap and gap[0] <= at < gap[1]:
+            continue
+        i = int(at * sr)
+        hit = drum("kick", min(int(0.3 * sr), len(x) - i))
+        vary = 1 + wobble * (np.random.default_rng(k).random() * 2 - 1)    # real kicks vary a little
+        x[i:i + len(hit)] += (0.6 if loud_first and k % 4 == 0 else 0.3) * vary * hit
+    return x
+
+
+class Bars(unittest.TestCase):
+    """Stronger flash on beat 1 of each bar, colors that move every few bars."""
+
+    def test_finds_the_first_beat_of_the_bar(self):
+        tr, beats = run_tracker(kick_loop(24))
+        late = [(t, d) for t, d, _ in beats if t > 112]          # after it has settled
+        firsts = [t for t, d in late if d]
+        self.assertGreaterEqual(len(firsts), 4)
+        on_loud = [t for t in firsts if abs(((t - 100.0) + 0.25) % 2.0 - 0.25) < 0.08]
+        self.assertGreaterEqual(len(on_loud), 0.8 * len(firsts))  # the loud kick is beat 1
+        self.assertAlmostEqual(len(firsts), len(late) / 4, delta=1.5)
+
+    def test_beat_one_stays_put_when_all_kicks_are_equal(self):
+        tr, beats = run_tracker(kick_loop(40, loud_first=False, wobble=0.15))
+        firsts = [round((t - 100.0) % 2.0, 1) % 2.0 for t, d, _ in beats if d and t > 112]
+        self.assertLessEqual(len(set(firsts)), 1, firsts)       # no wandering
+
+    def test_beat_one_survives_a_short_pause(self):
+        tr, beats = run_tracker(kick_loop(32, gap=(16, 19.5)))
+        firsts = [t for t, d, _ in beats if d and 120 < t < 126]   # right after the pause
+        on_loud = [t for t in firsts if abs(((t - 100.0) + 0.25) % 2.0 - 0.25) < 0.08]
+        self.assertTrue(firsts and len(on_loud) == len(firsts), firsts)
+
+    def test_bar_count_goes_up_once_per_bar(self):
+        tr, beats = run_tracker(kick_loop(24))
+        bars = [b for t, _, b in beats if t > 112]
+        self.assertAlmostEqual(bars[-1] - bars[0], 6, delta=1)
+
+    def test_colors_turn_together(self):
+        cfg = {"colorA": "#ff0000", "colorB": "#0000ff", "mode": "tempo"}
+        c = T.turn_colors(cfg, 1)
+        self.assertEqual(T.hue_sat(c["colorA"])[0], 45)
+        self.assertEqual(T.hue_sat(c["colorB"])[0], 285)
+        self.assertEqual(T.turn_colors(cfg, 8)["colorA"], cfg["colorA"])     # full circle
+        self.assertEqual(T.turn_colors({"colorA": "#ffffff", "colorB": "#0000ff"}, 1)["colorA"], "#ffffff")
+
+    def test_settings_checked(self):
+        reset_home()
+        old = T.ENGINE.cfg
+        try:
+            T.ENGINE.cfg = T.load_config()
+            self.assertEqual((T.ENGINE.cfg["accent"], T.ENGINE.cfg["bar_shift"], T.ENGINE.cfg["drops"]), (False, 0, False))
+            T.apply_config({"accent": 1, "bar_shift": 8, "drops": 1})
+            self.assertEqual((T.ENGINE.cfg["accent"], T.ENGINE.cfg["bar_shift"], T.ENGINE.cfg["drops"]), (True, 8, True))
+            T.apply_config({"bar_shift": 5})
+            self.assertEqual(T.ENGINE.cfg["bar_shift"], 0)
+        finally:
+            T.ENGINE.cfg = old
+
+
+class Drops(unittest.TestCase):
+    """The drums stop (a breakdown), then come back hard (the drop)."""
+
+    def test_breakdown_and_drop_are_found(self):
+        tr, _ = run_tracker(kick_loop(36, gap=(16, 24)))
+        drops = list(tr.drops)
+        self.assertEqual(len(drops), 1, drops)
+        self.assertAlmostEqual(drops[0], 124.0, delta=0.6)        # the first kick after the gap
+
+    def test_works_when_the_clock_starts_at_zero(self):
+        tr, _ = run_tracker(kick_loop(36, gap=(16, 24)), start=0.0)
+        self.assertEqual(len(tr.drops), 1)
+
+    def test_long_break_still_counts(self):
+        tr, _ = run_tracker(kick_loop(100, gap=(16, 79)))      # a 63 s break, like a long synth solo
+        self.assertEqual(len(tr.drops), 1)
+        self.assertAlmostEqual(tr.drops[0], 179.0, delta=0.6)
+
+    def test_steady_song_has_no_drop(self):
+        tr, _ = run_tracker(kick_loop(36))
+        self.assertEqual(len(tr.drops), 0)
+        self.assertFalse(tr.breakdown)
+
+    def test_short_pause_is_not_a_breakdown(self):
+        tr, _ = run_tracker(kick_loop(36, gap=(16, 17)))
+        self.assertEqual(len(tr.drops), 0)
+
+
 class ColorBlend(unittest.TestCase):
     """Calm -> energetic blends go around the color wheel, so the middle stays vivid."""
 
