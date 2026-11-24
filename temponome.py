@@ -757,11 +757,13 @@ def outputs_info():
     """For Settings > Sound: the speakers pass-through can play to, and whether BlackHole exists."""
     try:
         outs = audio_route.list_outputs()
+        prev = ENGINE.cfg.get("restore_out") or audio_route.default_output()
+        cur = audio_route.pick_speaker("", prev)
     except Exception:
-        return {"outputs": [], "blackhole": False}
+        return {"outputs": [], "blackhole": False, "current": ""}
     return {"outputs": [{"uid": o["uid"], "name": o["name"], "latency_ms": o["latency_ms"],
                          "builtin": o["builtin"]} for o in outs if not o["blackhole"]],
-            "blackhole": any(o["blackhole"] for o in outs)}
+            "blackhole": any(o["blackhole"] for o in outs), "current": cur["uid"] if cur else ""}
 
 
 class Engine:

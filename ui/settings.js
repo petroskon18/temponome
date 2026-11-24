@@ -277,8 +277,38 @@ document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
 });
 
 // ---------- sound ----------
-$('device').onchange = () => T.saveCfg({ device: $('device').value });
+$('device').onchange = () => { cfg.device = $('device').value; T.saveCfg({ device: cfg.device }); showPass(); };
 $('lock').onclick = () => { const on = $('lock').getAttribute('aria-checked') !== 'true'; $('lock').setAttribute('aria-checked', on); T.saveCfg({ lock: on }); };
+// ---------- play through Temponome ----------
+let outs = { outputs: [], blackhole: false, current: '' }, inputs = [];
+const spkUid = () => $('outDev').value || outs.current;
+function micChosen() {
+  const d = inputs.find(x => x.id === String(cfg.device));
+  return !!(cfg.device !== '' && d && !/blackhole/i.test(d.name));
+}
+function showPass() {
+  const why = !outs.blackhole ? 'Install BlackHole 2ch to use this.'
+    : micChosen() ? 'Choose BlackHole 2ch above to use this.' : '';
+  const on = !!cfg.passthru && !why;
+  $('passthru').disabled = !!why;
+  $('passthru').setAttribute('aria-checked', on);
+  $('ptWhy').hidden = !why; $('ptWhy').textContent = why;
+  $('outDev').disabled = $('spk').disabled = !on;
+  $('device').disabled = on;
+  const o = outs.outputs.find(x => x.uid === spkUid());
+  const ms = (cfg.spk_delay || {})[spkUid()] ?? Math.round(o ? o.latency_ms : 0);
+  $('spk').value = ms; $('spkV').textContent = ms + ' ms';
+}
+$('passthru').onclick = () => {
+  if ($('passthru').disabled) return;
+  cfg.passthru = $('passthru').getAttribute('aria-checked') !== 'true';
+  T.saveCfg({ passthru: cfg.passthru }); showPass();
+};
+$('outDev').onchange = () => { cfg.out_device = $('outDev').value; T.saveCfg({ out_device: cfg.out_device }); showPass(); };
+$('spk').oninput = () => {
+  cfg.spk_delay = Object.assign({}, cfg.spk_delay, { [spkUid()]: +$('spk').value });
+  $('spkV').textContent = $('spk').value + ' ms'; T.saveCfg({ spk_delay: cfg.spk_delay });
+};
 $('steady').onclick = () => { const on = $('steady').getAttribute('aria-checked') !== 'true'; $('steady').setAttribute('aria-checked', on); T.saveCfg({ steady: on }); };
 $('sens').oninput = () => T.saveCfg({ sensitivity: +$('sens').value });
 $('minB').oninput = () => { $('minBv').textContent = $('minB').value + '%'; T.saveCfg({ minB: +$('minB').value }); };
@@ -466,6 +496,7 @@ window.addEventListener('temponome-save-failed', () => {
 // ---------- start ----------
 async function init() {
   const devs = await T.api('/api/devices');
+  inputs = devs;
   $('device').innerHTML = '<option value="">Mac default input</option>' + devs.map(d => {
     const o = document.createElement('option'); o.value = d.id;
     o.textContent = /blackhole/i.test(d.name) ? d.name + ' (recommended)' : d.name; return o.outerHTML;
@@ -476,6 +507,12 @@ async function init() {
   document.querySelector(`input[name=mode][value=${cfg.mode}]`).checked = true;
   $('lock').setAttribute('aria-checked', !!cfg.lock);
   $('steady').setAttribute('aria-checked', cfg.steady !== false);
+  outs = await T.api('/api/outputs');
+  const same = outs.outputs.find(o => o.uid === outs.current);
+  $('outDev').innerHTML = '<option value="">Same as before' + (same ? ' (' + same.name + ')' : '') + '</option>'
+    + outs.outputs.map(o => { const e = document.createElement('option'); e.value = o.uid; e.textContent = o.name; return e.outerHTML; }).join('');
+  $('outDev').value = outs.outputs.some(o => o.uid === cfg.out_device) ? cfg.out_device : '';
+  showPass();
   $('sens').value = cfg.sensitivity; $('minB').value = cfg.minB; $('minBv').textContent = cfg.minB + '%';
   setLead(cfg.lead);
   buildWheel(); showMode();

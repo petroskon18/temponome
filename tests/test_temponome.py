@@ -681,6 +681,7 @@ class PassThroughEngine(unittest.TestCase):
         self.assertTrue(out["blackhole"])
         self.assertEqual([o["uid"] for o in out["outputs"]], ["MBA", "JBL"])
         self.assertEqual(out["outputs"][1]["latency_ms"], 160.0)
+        self.assertEqual(out["current"], "MBA")         # what "Same as before" would use now
 
 
 class ColorBlend(unittest.TestCase):

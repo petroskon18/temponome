@@ -41,6 +41,7 @@ button.primary { background: var(--accent-fill); color: var(--on-accent); border
 .meter div { height: 100%; width: 0; background: var(--ok); transition: width .1s; }
 .ends { display: flex; justify-content: space-between; }
 video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
+.switch .track:disabled, select:disabled, input[type=range]:disabled { opacity: .45; cursor: default; }
 #calFlash { position: fixed; inset: 0; background: #000; display: none; z-index: 99; color: #777; padding: 20px; font-size: 16px; }
 @media (max-width: 560px) { .pickbox { grid-template-columns: 1fr; justify-items: center; } .tabs button { min-width: 0; } }
 </style></head>
@@ -116,6 +117,16 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
   <div class="row"><span class="grow">Level</span><div class="meter" style="width:200px" aria-hidden="true"><div id="meter"></div></div></div>
  </div>
  <p class="hint">BlackHole 2ch plays your Mac's own sound to Temponome (recommended). Choose the microphone to listen to a speaker in the room.</p>
+ <h2>Play through Temponome</h2>
+ <div class="group">
+  <div class="row"><span class="grow" id="ptLbl">Play music through Temponome<br><span class="hint" style="margin:0">Your Mac's sound goes to BlackHole and Temponome plays it to your speaker a moment later, so the lights land exactly on the beat. Videos will be slightly out of sync.</span></span>
+   <span class="switch"><button class="track" id="passthru" role="switch" aria-labelledby="ptLbl" aria-checked="false"><span class="knob"></span></button></span></div>
+  <div class="row"><label for="outDev" class="grow">Speaker</label><select id="outDev" style="max-width:280px"></select></div>
+  <div class="row" style="display:block"><label for="spk" style="display:flex;justify-content:space-between"><span>Speaker delay</span><span class="marking" id="spkV"></span></label>
+   <input type="range" id="spk" min="0" max="400" step="5">
+   <p class="hint" style="margin:6px 0 0">Wireless speakers play late. Raise this if the lights flash before you hear the beat. Applies the next time you press Play.</p></div>
+ </div>
+ <p class="hint" id="ptWhy" hidden></p>
  <h2>Beat</h2>
  <div class="group">
   <div class="row"><span class="grow" id="lockLbl">Follow a steady beat<br><span class="hint" style="margin:0">Steadier flashes, especially with a microphone</span></span>
