@@ -20,6 +20,12 @@ The main window looks like a small piece of studio gear. Press Play: the meter's
 - **Stop** puts each light back the way it looked before you pressed Play.
 - Your lights, colors and timing from the old version carry over automatically. Settings live in `~/Library/Application Support/Temponome/`.
 
+## Ways the lights can react
+
+- **Brightness or color.** In Settings → Colors, choose what each beat changes. *Brightness* flashes the lights brighter. *Color* keeps them at a steady brightness and makes them jump from your calm color to your energetic one on every beat, then fade back.
+- **One drum per light.** In Settings → Lights, each light can follow the beat, or just one drum: the **kick**, the **snare** or the **hi-hats**. For example, one lamp can thump with the kick while another flickers with the hi-hats. The snare choice may also catch guitar or voice, which sit in the same range. Drums land best with *Play music through Temponome* on (below).
+- **Together or Chase.** On the main window, lights that follow the beat can flash together or take turns.
+
 ## Lights exactly on the beat
 
 Turn on **Play music through Temponome** in Settings → Sound. Temponome then plays your Mac's sound to your speaker itself, about 0.3 seconds late. Because it hears every drum hit before you do, it can make each light flash at the moment you hear the hit, instead of guessing where the next beat will be.
@@ -36,8 +42,8 @@ Even with it off, Temponome now keeps a steadier beat: it ignores brief jumps in
 
 | Lights | Colors | Timing |
 |---|---|---|
-| <img src="docs/screenshots/settings-lights.png" alt="Lights tab: three found lights with their color choice, Find my lights, and the Tapo account"> | <img src="docs/screenshots/settings-colors.png" alt="Colors tab: a strip showing the color at each tempo above a segmented color wheel with calm and energetic markers"> | <img src="docs/screenshots/settings-timing.png" alt="Timing tab: camera calibration and a fine-tune slider from Earlier to Later"> |
-| Find your lights on Wi-Fi and pick which to use. | Pick a calm and an energetic color on the wheel; the strip shows the color at every tempo, and Preview shows it on your lights. | Measure each light's delay with the Mac's camera, so flashes land on the beat. |
+| <img src="docs/screenshots/settings-lights.png" alt="Lights tab: three lights, each with what it reacts to (kick drum, hi-hats, on the beat) and its color choice, plus Find my lights"> | <img src="docs/screenshots/settings-colors.png" alt="Colors tab: On each beat set to Color, above a segmented color wheel with calm and energetic markers"> | <img src="docs/screenshots/settings-timing.png" alt="Timing tab: camera calibration and a fine-tune slider from Earlier to Later"> |
+| Find your lights on Wi-Fi, pick which to use, and choose what each one reacts to. | Choose whether a beat changes brightness or color, and pick a calm and an energetic color on the wheel; Preview shows it on your lights. With Brightness, a strip shows the color at every tempo. | Measure each light's delay with the Mac's camera, so flashes land on the beat. |
 
 | Sound |   |
 |---|---|
