@@ -87,13 +87,14 @@ anything they must do on their Mac, and keep the double-click launcher working.
   working until the owner has used the installed app for a while.
 - `tests/simulate.py`: runs the real `Engine` against fake lights and synthetic
   music (it mocks `tapo` and `sounddevice`). Use it to check any change to beat
-  detection or light timing: `python3 tests/simulate.py` should print `14/14 passed`
+  detection or light timing: `python3 tests/simulate.py` should print `16/16 passed`
   (7 music scenarios, calibration / on-beat, Govee with a fake lamp on 127.0.0.1, live
   light-list changes, a Tapo bulb that takes 30 s to answer, a light unplugged mid-song,
-  Stop putting the lights back, and pass-through landing the light on the heard kick). It needs numpy and scipy. Stop any other Temponome first:
+  Stop putting the lights back, pass-through landing the light on the heard kick,
+  color pulse, and one light per drum on a clean drum loop). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (102 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (112 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -187,6 +188,20 @@ anything they must do on their Mac, and keep the double-click launcher working.
    in ~15 s; the Mac's two volume converters are not inverses, so `level_for_db` bisects
    'v2db' only; a stream that runs dry refills to the full delay. Speaker vanishes → plays on
    the built-in speakers, status "Your speaker disconnected · playing on …".
+
+12. **Color pulse** (setting `pulse`: "brightness" | "color", Settings > Colors "On each
+   beat"): brightness stays at maxB and the beat moves the color from A to B, fading back in
+   `PULSE_STEPS` = 4 steps (`pulse_color`, around the wheel like the tempo blend). The tempo
+   blend and per-light A/B are hidden then. The "keep the bulb free before a peak" guard
+   treats any non-beat update as a fade step in this mode.
+13. **One drum per light** (device `sound`: beat | kick | snare | hats, Settings > Lights):
+   `BeatTracker` keeps hit times per drum in `hits` (kick 40–150 Hz, snare 1–5 kHz, hi-hats
+   7–16 kHz): a hit = band energy > `HIT_RISE` (3×) its last 0.3 s and > 8 % of its ~10 s
+   peak; hi-hats also need more energy than the snare band (snares sizzle up there too).
+   Times are "heard time" with pass-through, so lights land on the hits; without it they are
+   one round trip late. `next_hit_in` guesses the next hit from regular spacing so the bulb
+   is kept free before it. On 8 real songs kicks came at about the beat rate; the snare
+   band also catches some guitar/voice; 2× rise gave more false hits (kept 3×).
 
 ## History and lessons
 - Nov 2026 real-bulb test: "off the beat" had two causes. The owner's settings (max

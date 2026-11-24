@@ -46,14 +46,19 @@ function renderDevs() {
     const sub = document.createElement('div'); sub.className = 'hint'; sub.style.margin = 0;
     sub.textContent = `${MODEL_NAME(d.model)} · ${d.ip}` + (d.calib == null ? ' · timing not measured' : ' · timing measured');
     info.append(title, sub);
+    const sound = document.createElement('select');
+    sound.setAttribute('aria-label', `What ${lname(d)} reacts to`);
+    sound.innerHTML = '<option value="beat">On the beat</option><option value="kick">Kick drum</option><option value="snare">Snare</option><option value="hats">Hi-hats</option>';
+    sound.value = d.sound || 'beat'; sound.onchange = () => { d.sound = sound.value; saveDevices(); };
     const color = document.createElement('select');
     color.setAttribute('aria-label', `Color for ${lname(d)}`);
     color.innerHTML = '<option value="blend">Tempo blend</option><option value="A">Always color A</option><option value="B">Always color B</option>';
     color.value = d.color; color.onchange = () => { d.color = color.value; saveDevices(); };
+    color.hidden = cfg.pulse === 'color';     // with a color pulse every light goes calm -> energetic
     const rm = document.createElement('button'); rm.textContent = 'Remove';
     rm.setAttribute('aria-label', `Remove ${lname(d)}`);
     rm.onclick = () => { cfg.devices.splice(i, 1); saveDevices(); renderDevs(); renderFinder(); calSummary(); };
-    row.append(info, color, rm);
+    row.append(info, sound, color, rm);
     box.appendChild(row);
   });
   renderOffsets();
@@ -250,7 +255,9 @@ function setPick(key) {
   drawMarks();
 }
 function showMode() {
-  $('pickB').hidden = cfg.mode === 'fixed';
+  const pulse = cfg.pulse === 'color';
+  $('tempoColors').hidden = pulse;           // the tempo blend doesn't apply to a color pulse
+  $('pickB').hidden = cfg.mode === 'fixed' && !pulse;
   setPick(pickKey); drawStrip();
 }
 $('pickA').onclick = () => setPick('colorA');
@@ -272,6 +279,9 @@ $('preview').onclick = async () => {
   $('pvMsg').textContent = r.ok ? 'Showing it on your lights for a moment.' : r.error;
   clearTimeout($('pvMsg').t); $('pvMsg').t = setTimeout(() => { $('pvMsg').textContent = ''; }, 4000);
 };
+document.querySelectorAll('input[name=pulse]').forEach(r => r.onchange = () => {
+  cfg.pulse = r.value; T.saveCfg({ pulse: r.value }); showMode(); renderDevs();
+});
 document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
   cfg.mode = r.value; T.saveCfg({ mode: r.value }); showMode();
 });
@@ -505,6 +515,7 @@ async function init() {
   $('email').value = cfg.email || ''; if (cfg.has_password) $('password').placeholder = 'Saved';
   $('device').value = cfg.device;
   document.querySelector(`input[name=mode][value=${cfg.mode}]`).checked = true;
+  document.querySelector(`input[name=pulse][value=${cfg.pulse || 'brightness'}]`).checked = true;
   $('lock').setAttribute('aria-checked', !!cfg.lock);
   $('steady').setAttribute('aria-checked', cfg.steady !== false);
   outs = await T.api('/api/outputs');

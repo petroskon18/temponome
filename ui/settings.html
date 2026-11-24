@@ -73,6 +73,7 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
   <div class="row"><label for="addModel" class="grow">Type</label><select id="addModel"></select></div>
   <div class="row"><span class="grow"></span><button id="addBtn">Add light</button></div>
  </div>
+ <p class="hint">Each light can react to the beat or to one drum: the kick, the snare or the hi-hats. Drums land best with Play music through Temponome (Sound tab). The snare choice may also catch guitar or voice.</p>
  <p class="hint">Govee lamps need LAN Control switched on: in the Govee Home app open the lamp and tap the settings gear.</p>
 
  <h2>Tapo account</h2>
@@ -85,6 +86,12 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
 
 <!-- Colors -->
 <section id="colors" role="tabpanel" aria-labelledby="tab-colors" hidden>
+ <h2>On each beat</h2>
+ <div class="group">
+  <div class="row"><label class="grow"><input type="radio" name="pulse" value="brightness"> Brightness: the light flashes brighter</label></div>
+  <div class="row"><label class="grow"><input type="radio" name="pulse" value="color"> Color: the light jumps from the calm to the energetic color and fades back, at steady brightness</label></div>
+ </div>
+ <div id="tempoColors">
  <h2>How colors change</h2>
  <div class="group">
   <div class="row"><label class="grow"><input type="radio" name="mode" value="tempo"> Blend by tempo: slow songs calm, fast songs energetic</label></div>
@@ -93,6 +100,7 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
  <h2>Color by tempo</h2>
  <div class="group" style="padding:12px 14px">
   <svg id="strip" viewBox="0 0 560 70" role="img" aria-label="Color at each tempo"></svg>
+ </div>
  </div>
  <h2>Pick colors</h2>
  <div class="group pickbox">

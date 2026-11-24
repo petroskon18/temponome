@@ -102,6 +102,26 @@ def install_fakes(sent, song):
                                                        query_devices=lambda: devices)
 
 
+def make_drums(bpm):
+    """A clean drum loop: kick on every beat, a hi-hat between beats, quiet hiss."""
+    P = 60 / bpm
+    n_loop = int(round(P * SR))
+    t = np.arange(n_loop) / SR
+    kick = np.sin(2 * np.pi * (50 + 80 * np.exp(-t * 30)) * t) * np.exp(-t * 14)
+    spec = np.fft.rfft(np.random.default_rng(3).standard_normal(n_loop))
+    spec[np.fft.rfftfreq(n_loop, 1 / SR) < 7000] = 0
+    hiss = np.fft.irfft(spec, n_loop)
+    th = (t - P / 2) % P
+    hat = 0.5 * hiss / hiss.std() * np.exp(-th * 60) * (t >= P / 2)
+    loop = 0.3 * (kick + hat)
+
+    def song(t0):
+        i = int(round(t0 * SR)) % n_loop
+        idx = (i + np.arange(512)) % n_loop
+        return (loop[idx] + 0.003 * np.random.randn(512)).astype(np.float32)
+    return song
+
+
 def make_song(amp, bpm, hp):
     hb, ha = butter(2, 150 / (SR / 2), "high")
     state = {"zi": lfilter_zi(hb, ha) * 0}
@@ -330,6 +350,54 @@ def run_passthrough_checks(bpm=120, calib=100):
     return ok
 
 
+def run_color_pulse_checks(bpm=120):
+    """"On each beat: Color": brightness stays put, the color jumps to B on beats and fades to A."""
+    sent = collections.defaultdict(list)
+    app = load_app(sent, make_song(0.08, bpm, False))
+    e = app.Engine()
+    e.cfg.update(email="a", password="b", lock=True, minB=10, maxB=60, smooth=0.1, pulse="color",
+                 colorA="#ff0000", colorB="#0000ff",
+                 devices=[{"ip": "1.1.1.1", "model": "l530", "color": "blend", "offset": 0, "calib": None}])
+    e.start()
+    time.sleep(9)
+    rows = [(t, b, h) for t, b, h in sent["1.1.1.1"] if t > time.time() - 5]
+    e.stop()
+    time.sleep(0.3)
+    bright = {b for _, b, _ in rows}
+    hues = [h for _, _, h in rows]
+    peaks = sum(1 for a, b in zip(hues, hues[1:]) if b == 240 and a != 240)
+    ok = bright == {60} and 0 in hues and peaks >= 0.7 * 5 * bpm / 60
+    print(f"{'PASS' if ok else 'FAIL'}  color pulse -> brightness {sorted(bright)} (expect [60]), "
+          f"hues seen {sorted(set(hues))}, jumps to blue {peaks} in 5 s (expect ~{5 * bpm // 60})")
+    return ok
+
+
+def run_sound_light_checks(bpm=120):
+    """One light follows the kick drum, another the hi-hats (one between each beat)."""
+    sent = collections.defaultdict(list)
+    app = load_app(sent, make_drums(bpm))
+    import audio_route
+    audio_route.BACKEND = FakeRoute()
+    e = app.Engine()
+    e.cfg.update(email="a", password="b", lock=True, minB=10, maxB=100, smooth=0.05, passthru=True, devices=[
+        {"ip": "1.1.1.1", "model": "l530", "color": "blend", "offset": 0, "calib": 100, "sound": "kick"},
+        {"ip": "1.1.1.2", "model": "l530", "color": "blend", "offset": 0, "calib": 100, "sound": "hats"}])
+    e.start()
+    time.sleep(9)
+    end = time.time()
+    e.stop()
+    time.sleep(0.3)
+    def flashes(ip):
+        rows = [b for t, b, h in sent[ip] if t > end - 5]
+        return sum(1 for a, b in zip(rows, rows[1:]) if b >= 70 and a < 70)
+    kick, hats = flashes("1.1.1.1"), flashes("1.1.1.2")
+    want = 5 * bpm / 60
+    ok = 0.7 * want <= kick <= 1.3 * want and 0.7 * want <= hats <= 1.3 * want
+    print(f"{'PASS' if ok else 'FAIL'}  one sound per light -> kick light {kick} flashes in 5 s, "
+          f"hi-hat light {hats} (expect ~{want:.0f} each)")
+    return ok
+
+
 def run_restore_checks():
     """Stop puts every light back the way it looked before Play."""
     lamp = FakeGovee()
@@ -501,5 +569,7 @@ if __name__ == "__main__":
     results.append(run_dropout_checks())
     results.append(run_restore_checks())
     results.append(run_passthrough_checks())
+    results.append(run_color_pulse_checks())
+    results.append(run_sound_light_checks())
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)

@@ -60,9 +60,11 @@ DEFAULTS = {
     "restore_vol": False,  # True while BlackHole holds the speaker's volume (see take_over_volume)
     "lead": 60,            # ms to fire early to cover bulb lag
     "smooth": 0.4,         # 0 = snappy short pulses, 1 = long smooth pulses
+    "pulse": "brightness", # what a beat changes: "brightness" or "color" (calm A -> energetic B)
 }
 
 
+SOUNDS = ("beat", "kick", "snare", "hats")   # what a light reacts to
 MODELS = ("l530", "l535", "l630", "l900", "l920", "l930", "govee")
 
 
@@ -76,6 +78,7 @@ def clean_devices(devs):
         out.append({"ip": str(d.get("ip", "")).strip(),
                     "model": model if model in MODELS else "l530",
                     "color": color if color in ("blend", "A", "B") else "blend",
+                    "sound": d.get("sound") if d.get("sound") in SOUNDS else "beat",
                     "offset": max(-200, min(300, int(d.get("offset", 0) or 0))),
                     # webcam-measured delay (ms) between the command finishing its round trip
                     # and the bulb visibly lighting up; None = not calibrated
@@ -437,12 +440,22 @@ async def put_back(h, snap):
 class BeatTracker:
     """Onset detection + tempo estimation + a steady beat grid (good for noisy mic input)."""
     FPS = SAMPLE_RATE / BLOCK
+    HIT_GAP = {"kick": 0.2, "snare": 0.15, "hats": 0.08}   # s: shortest time between two hits
+    HIT_RISE = 3.0     # a hit's energy is this many times the band's last 0.3 s
 
     def __init__(self):
         self.win = 1024
         self.freqs = np.fft.rfftfreq(self.win, 1 / SAMPLE_RATE)
         self.mask = (self.freqs >= 40) & (self.freqs <= 250)
         self.bass_mask = (self.freqs >= 40) & (self.freqs <= 150)
+        # separate sounds, so a light can follow just one: snare crack and hi-hat sizzle
+        self.band_masks = {"kick": self.bass_mask,
+                           "snare": (self.freqs >= 1000) & (self.freqs <= 5000),
+                           "hats": (self.freqs >= 7000) & (self.freqs <= 16000)}
+        self.band_hist = {b: deque(maxlen=int(self.FPS * 0.3)) for b in self.band_masks}
+        self.band_peak = {b: 1e-12 for b in self.band_masks}
+        self.hits = {b: deque(maxlen=32) for b in self.HIT_GAP}    # recent hit times per sound
+        self.last_hit = {b: 0.0 for b in self.HIT_GAP}
         self.ring = np.zeros(self.win, dtype=np.float32)
         self.prev = None
         self.flux_hist = deque(maxlen=int(self.FPS * 8))
@@ -499,6 +512,19 @@ class BeatTracker:
             arr = np.asarray(self.lflux_hist)
             hit_flux = flux > arr.mean() + (sens - 1.0) * 4.0 * arr.std() and flux > 1e-3
         self.lflux_hist.append(flux)
+        energy = {b: float((mag[m] ** 2).sum()) for b, m in self.band_masks.items()}
+        for b, e in energy.items():
+            # a hit = this band's energy jumps well above its last 0.3 s, and is loud for this
+            # band (compared with its recent loudest, ~10 s memory)
+            self.band_peak[b] = max(e, self.band_peak[b] * 0.9989)
+            hist = self.band_hist[b]
+            if len(hist) >= 8:
+                rise = e > self.HIT_RISE * (sum(hist) / len(hist))
+                ok = audible and rise and e > 0.08 * self.band_peak[b]
+                if b == "hats":      # a snare's sizzle reaches up here too; hi-hats are mostly up here
+                    ok = ok and e >= energy["snare"]
+                self._hit(b, ok, now)
+            hist.append(e)
         onset = (audible and (hit_bass or hit_flux)
                  and now - self.last_onset > 0.22)
         if onset:
@@ -512,6 +538,11 @@ class BeatTracker:
         if now - self.last_est > 0.5 and len(self.flux_hist) > self.FPS * 4:
             self.last_est = now
             self._estimate_tempo(now)
+
+    def _hit(self, band, yes, now):
+        if yes and now - self.last_hit[band] > self.HIT_GAP[band]:
+            self.last_hit[band] = now
+            self.hits[band].append(now)
 
     def _align(self, now):
         T = 60.0 / self.bpm
@@ -701,14 +732,28 @@ def pick_color(cfg, bpm, which="blend"):
         return hue_sat(cfg["colorA"])
     if which == "B":
         return hue_sat(cfg["colorB"])
+    return blend_colors(cfg, (bpm - 60) / 120)
+
+
+def blend_colors(cfg, t):
+    """Calm (A) at t=0 to energetic (B) at t=1, around the color wheel (see pick_color)."""
     (ha, sa), (hb, sb) = hue_sat(cfg["colorA"]), hue_sat(cfg["colorB"])
     if sa == 0:
         ha = hb
     if sb == 0:
         hb = ha
-    t = min(max((bpm - 60) / 120, 0.0), 1.0)
+    t = min(max(t, 0.0), 1.0)
     diff = ((hb - ha + 180) % 360) - 180
     return int(round(ha + diff * t)) % 360, int(round(sa + (sb - sa) * t))
+
+
+PULSE_STEPS = 4     # color pulse fades through A, 3 colors between, and B
+
+
+def pulse_color(cfg, env):
+    """Color pulse: the light shows B on a beat (env 1) and fades back to A (env 0), in a
+    few steps so a slow bulb isn't flooded with commands."""
+    return blend_colors(cfg, round(env * PULSE_STEPS) / PULSE_STEPS)
 
 
 def hsv_hex(hue, sat):
@@ -752,6 +797,22 @@ def light_lead(L, dcfg, cfg, mean_lat):
         # slower-than-average lights fire earlier, faster ones later, so they land together
         lead = nudge + max(-0.15, min(0.25, 0.5 * (L.lat - mean_lat)))
     return max(-0.2, min(LOOKAHEAD - 0.05, lead))
+
+
+def next_hit_in(hits, now):
+    """Seconds until a drum's next hit, guessed from the spacing of its last few hits when
+    they come regularly (most drum parts repeat); None when they don't."""
+    times = [t for t, _ in hits][-5:]
+    if len(times) < 4:
+        return None
+    gaps = np.diff(times)
+    gap = float(np.median(gaps))
+    if gap <= 0 or np.max(np.abs(gaps - gap)) > 0.15 * gap:
+        return None
+    nxt = times[-1] + gap
+    while nxt <= now:
+        nxt += gap
+    return nxt - now
 
 
 def outputs_info():
@@ -1070,6 +1131,8 @@ class Engine:
         look = pt["offset"] - 0.04 if pt else LOOKAHEAD
         beat_n = 0
         events = deque(maxlen=16)
+        hits = {b: deque(maxlen=16) for b in tracker.hits}    # (time, number) per sound
+        hit_n = 0
         ui_beats = deque(maxlen=16)
         last_t = time.time()
         t_start = time.time()
@@ -1104,6 +1167,10 @@ class Engine:
                     beat_n += 1
                     events.append((bt, beat_n))
                     ui_beats.append(bt)
+                for b, q in tracker.hits.items():      # kick / snare / hi-hat hits for lights that follow one
+                    while q:
+                        hit_n += 1
+                        hits[b].append((q.popleft(), hit_n))
                 while ui_beats and ui_beats[0] <= now:   # count a beat when it lands, for the platter
                     ui_beats.popleft()
                     self.beats += 1
@@ -1134,11 +1201,21 @@ class Engine:
                     lead = light_lead(L, dcfg, cfg, mean_lat)
 
                     fired = False
-                    for bt, idx in events:
-                        if idx > L.last_idx and bt - lead <= now:
-                            L.last_idx, L.last_bt = idx, bt
-                            if cfg["multi"] == "sync" or n == 1 or (idx - 1) % n == k:
-                                fired = True
+                    sound = dcfg.get("sound", "beat")
+                    if sound in hits:
+                        # this light follows one sound: flash on each of its hits (as heard)
+                        for ht, idx in hits[sound]:
+                            if idx > L.last_hit and ht - lead <= now:
+                                L.last_hit, L.last_bt, fired = idx, ht, True
+                        ahead = [ht for ht, _ in hits[sound] if ht > now]
+                        tn_l = (min(ahead) - now) if ahead else next_hit_in(hits[sound], now)
+                    else:
+                        for bt, idx in events:
+                            if idx > L.last_idx and bt - lead <= now:
+                                L.last_idx, L.last_bt = idx, bt
+                                if cfg["multi"] == "sync" or n == 1 or (idx - 1) % n == k:
+                                    fired = True
+                        tn_l = tn
                     if fired or manual:
                         L.env = 1.0
                     else:
@@ -1148,14 +1225,21 @@ class Engine:
                     b = int(round((cfg["minB"] + span * L.env * peak) / 10.0) * 10)
                     b = max(1, min(100, b))
 
-                    which = dcfg.get("color", "blend")
-                    target_hue, sat = pick_color(cfg, tracker.bpm, which)
-                    sat = max(1, min(100, sat))
-                    if L.hue_now is None:
-                        L.hue_now = float(target_hue)
-                    diff = ((target_hue - L.hue_now + 180) % 360) - 180
-                    L.hue_now = (L.hue_now + diff * min(1.0, dt * 1.5)) % 360
-                    hue = int(round(L.hue_now / 4.0) * 4) % 360
+                    if cfg.get("pulse") == "color":
+                        # color pulse: steady brightness, the beat moves the color A -> B and back
+                        b = max(1, min(100, int(cfg["maxB"])))
+                        hue, sat = pulse_color(cfg, L.env)
+                        sat = max(1, min(100, sat))
+                        L.hue_now = float(hue)
+                    else:
+                        which = dcfg.get("color", "blend")
+                        target_hue, sat = pick_color(cfg, tracker.bpm, which)
+                        sat = max(1, min(100, sat))
+                        if L.hue_now is None:
+                            L.hue_now = float(target_hue)
+                        diff = ((target_hue - L.hue_now + 180) % 360) - 180
+                        L.hue_now = (L.hue_now + diff * min(1.0, dt * 1.5)) % 360
+                        hue = int(round(L.hue_now / 4.0) * 4) % 360
                     pv = self.preview
                     if pv and now < pv[2]:            # Settings is previewing a color: show it plainly
                         hue, sat, b = pv[0], max(1, pv[1]), max(1, min(100, int(cfg["maxB"])))
@@ -1168,8 +1252,9 @@ class Engine:
                     # keep the link free just before this light's next peak so the peak isn't queued behind a fade step
                     # (also when that beat is due but not yet announced, which happens with
                     # pass-through if a light's replies got slower; not if it already flashed for it)
-                    soon = (tn is not None and tn - lead < L.lat + 0.04 and b < L.last_sent[0]
-                            and abs(L.last_bt - (now + tn)) > 0.08)
+                    fading = (not (fired or manual)) if cfg.get("pulse") == "color" else b < L.last_sent[0]
+                    soon = (tn_l is not None and tn_l - lead < L.lat + 0.04 and fading
+                            and abs(L.last_bt - (now + tn_l)) > 0.08)
                     if changed and not soon and not L.busy and now - L.last_send_t >= L.min_gap:
                         L.busy = True   # each light sends on its own, in parallel
                         task = asyncio.create_task(self._send(L, b, hue, sat))
@@ -1192,6 +1277,7 @@ class Light:
         self.last_sent = (-1, -1, -1)
         self.last_send_t = 0.0
         self.last_bt = 0.0   # time of the last beat this light flashed for
+        self.last_hit = 0    # number of the last kick/snare/hi-hat hit it flashed for
         self.busy = False
         self.min_gap = 0.07  # s between commands
         self.fails = 0       # commands failed in a row
@@ -1305,6 +1391,8 @@ def _apply_config_locked(body):
     new["sensitivity"] = float(new["sensitivity"])
     new["smooth"] = float(new["smooth"])
     new["lock"] = bool(new["lock"])
+    if new["pulse"] not in ("brightness", "color"):
+        new["pulse"] = "brightness"
     new["steady"] = bool(new["steady"])
     new["lead"] = max(-150, min(250, int(new["lead"])))
     new["passthru"] = bool(new["passthru"])

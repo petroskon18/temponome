@@ -733,6 +733,105 @@ class PassThroughEngine(unittest.TestCase):
         self.assertEqual(out["current"], "MBA")         # what "Same as before" would use now
 
 
+class ColorPulse(unittest.TestCase):
+    """"On each beat: Color" — the light jumps from calm A to energetic B and fades back."""
+    cfg = {"colorA": "#ff0000", "colorB": "#0000ff", "mode": "tempo"}
+
+    def test_rests_on_a_and_peaks_on_b(self):
+        self.assertEqual(T.pulse_color(self.cfg, 0.0), T.hue_sat("#ff0000"))
+        self.assertEqual(T.pulse_color(self.cfg, 1.0), T.hue_sat("#0000ff"))
+
+    def test_fades_around_the_wheel(self):
+        self.assertEqual(T.pulse_color(self.cfg, 0.5), (300, 100))   # red -> magenta -> blue
+
+    def test_fade_moves_in_steps(self):
+        # few distinct colors, so a slow bulb isn't flooded with commands during the fade
+        self.assertEqual(T.pulse_color(self.cfg, 0.55), T.pulse_color(self.cfg, 0.5))
+        self.assertEqual(len({T.pulse_color(self.cfg, k / 100) for k in range(101)}), 5)
+
+    def test_setting_is_checked(self):
+        self.assertEqual(T.DEFAULTS["pulse"], "brightness")
+        reset_home()
+        old = T.ENGINE.cfg
+        try:
+            T.ENGINE.cfg = T.load_config()
+            T.apply_config({"pulse": "color"})
+            self.assertEqual(T.ENGINE.cfg["pulse"], "color")
+            T.apply_config({"pulse": "disco"})
+            self.assertEqual(T.ENGINE.cfg["pulse"], "brightness")
+        finally:
+            T.ENGINE.cfg = old
+
+
+def drum(kind, n, sr=44100, rng=np.random.default_rng(1)):
+    """A made-up drum hit `n` samples long: kick = falling low tone, snare = 200 Hz body plus
+    1-5 kHz noise, hats = noise above 7 kHz."""
+    t = np.arange(n) / sr
+    if kind == "kick":
+        return np.sin(2 * np.pi * (50 + 80 * np.exp(-t * 30)) * t) * np.exp(-t * 14)
+    spec = np.fft.rfft(rng.standard_normal(n))
+    f = np.fft.rfftfreq(n, 1 / sr)
+    if kind == "snare":
+        spec[(f < 1000) | (f > 5000)] = 0
+        noise = np.fft.irfft(spec, n) / np.sqrt(n)
+        return (0.8 * noise / noise.std() + 0.4 * np.sin(2 * np.pi * 200 * t)) * np.exp(-t * 25)
+    spec[f < 7000] = 0
+    noise = np.fft.irfft(spec, n)
+    return 0.5 * noise / noise.std() * np.exp(-t * 60)
+
+
+def play(pattern, seconds=8, sr=44100):
+    """Feed BeatTracker a loop of drum hits: pattern = [(time in s within a 1 s bar, kind)]."""
+    x = 0.01 * np.random.default_rng(2).standard_normal(int(seconds * sr))    # quiet room noise
+    for bar in range(seconds):
+        for at, kind in pattern:
+            i = int((bar + at) * sr)
+            hit = drum(kind, min(int(0.3 * sr), len(x) - i))
+            x[i:i + len(hit)] += 0.3 * hit
+    tr = T.BeatTracker()
+    for k in range(len(x) // T.BLOCK):
+        tr.process(x[k * T.BLOCK:(k + 1) * T.BLOCK].astype(np.float32), 1.5, now=100.0 + k * T.BLOCK / sr)
+    return {band: len([h for h in tr.hits[band] if h > 102.0]) for band in ("kick", "snare", "hats")}
+
+
+class SoundsApart(unittest.TestCase):
+    """Each light can follow one sound: kick drum, snare or hi-hats."""
+
+    def test_hats_alone(self):
+        got = play([(0.0, "hats"), (0.25, "hats"), (0.5, "hats"), (0.75, "hats")])
+        self.assertAlmostEqual(got["hats"], 24, delta=3)      # 4 a second for the last 6 s
+        self.assertLessEqual(got["kick"], 1)
+
+    def test_kick_alone(self):
+        got = play([(0.0, "kick"), (0.5, "kick")])
+        self.assertAlmostEqual(got["kick"], 12, delta=2)
+        self.assertLessEqual(got["hats"], 1)
+
+    def test_snare_alone(self):
+        got = play([(0.25, "snare"), (0.75, "snare")])
+        self.assertAlmostEqual(got["snare"], 12, delta=2)
+        self.assertLessEqual(got["hats"], 1)
+
+    def test_full_kit_keeps_them_apart(self):
+        got = play([(0.0, "kick"), (0.125, "hats"), (0.25, "snare"), (0.375, "hats"),
+                    (0.5, "kick"), (0.625, "hats"), (0.75, "snare"), (0.875, "hats")])
+        self.assertAlmostEqual(got["kick"], 12, delta=2)
+        self.assertAlmostEqual(got["snare"], 12, delta=2)
+        self.assertAlmostEqual(got["hats"], 24, delta=4)
+
+    def test_next_hit_guessed_from_regular_hits(self):
+        hits = [(10.0, 1), (10.5, 2), (11.0, 3), (11.5, 4)]
+        self.assertAlmostEqual(T.next_hit_in(hits, 11.6), 0.4)
+        self.assertAlmostEqual(T.next_hit_in(hits, 12.1), 0.4)          # one missed: the one after
+        self.assertIsNone(T.next_hit_in([(10.0, 1), (10.2, 2), (11.0, 3), (11.1, 4)], 11.2))
+        self.assertIsNone(T.next_hit_in(hits[:3], 11.2))
+
+    def test_light_setting_is_checked(self):
+        devs = T.clean_devices([{"ip": "1.2.3.4", "sound": "hats"}, {"ip": "1.2.3.5", "sound": "cowbell"},
+                                {"ip": "1.2.3.6"}])
+        self.assertEqual([d["sound"] for d in devs], ["hats", "beat", "beat"])
+
+
 class ColorBlend(unittest.TestCase):
     """Calm -> energetic blends go around the color wheel, so the middle stays vivid."""
 
