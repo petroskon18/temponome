@@ -223,6 +223,8 @@ anything they must do on their Mac, and keep the double-click launcher working.
   sample-accurate. The goal is to feel on-beat.
 
 ## Not verified on real hardware yet
+- Color pulse and one-drum-per-light confirmed working by the owner on 2026-11-24 (test
+  build, real lights).
 - Pass-through confirmed by the owner on 2026-11-24 (test build, MacBook speakers, real
   Tapo + Govee lights): lights on time, sound fine, Play and Stop put everything back.
   Not yet tried: Bluetooth speakers, a speaker disconnecting mid-song, recovery after a crash.
