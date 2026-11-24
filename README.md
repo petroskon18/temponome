@@ -3,11 +3,11 @@
 Makes your Tapo and Govee lights pulse and change color with your music, on a Mac.
 
 <p align="center">
-  <img src="docs/screenshots/main-dark.png" width="49%" alt="Temponome playing in dark mode: a record shows 110 BPM, with Stop, Brightness, Pulse and Together or Chase controls">
-  <img src="docs/screenshots/main-light.png" width="49%" alt="The same window in light mode">
+  <img src="docs/screenshots/main-dark.png" width="49%" alt="Temponome playing in dark mode: a cream VU meter shows 110 BPM, three light lamps glow below it, with a stop key, a together or chase toggle, amber brightness steps and a pulse fader">
+  <img src="docs/screenshots/main-light.png" width="49%" alt="The same window with the silver panel used in light mode">
 </p>
 
-The main window looks like a small turntable. Press Play and the record shows the song's tempo, glowing in your lights' color on every beat.
+The main window looks like a small piece of studio gear. Press Play: the meter's needle points at the song's tempo and kicks on every beat, and each of your lights has its own lamp glowing in the color it is showing.
 
 ## Install
 1. Download **Temponome.dmg** from the [latest release](https://github.com/petroskon18/temponome/releases/latest) (Apple silicon Macs), open it and drag **Temponome** onto the **Applications** folder (choose Replace if asked).
@@ -23,8 +23,8 @@ The main window looks like a small turntable. Press Play and the record shows th
 
 | Lights | Colors | Timing |
 |---|---|---|
-| <img src="docs/screenshots/settings-lights.png" alt="Lights tab: three found lights with their color choice, Find my lights, and the Tapo account"> | <img src="docs/screenshots/settings-colors.png" alt="Colors tab: two color wheels, a calm color for slow songs and an energetic one for fast songs"> | <img src="docs/screenshots/settings-timing.png" alt="Timing tab: camera calibration and a fine-tune slider from Earlier to Later"> |
-| Find your lights on Wi-Fi and pick which to use. | Choose a calm and an energetic color; the lights blend between them by tempo. | Measure each light's delay with the Mac's camera, so flashes land on the beat. |
+| <img src="docs/screenshots/settings-lights.png" alt="Lights tab: three found lights with their color choice, Find my lights, and the Tapo account"> | <img src="docs/screenshots/settings-colors.png" alt="Colors tab: a strip showing the color at each tempo above a segmented color wheel with calm and energetic markers"> | <img src="docs/screenshots/settings-timing.png" alt="Timing tab: camera calibration and a fine-tune slider from Earlier to Later"> |
+| Find your lights on Wi-Fi and pick which to use. | Pick a calm and an energetic color on the wheel; the strip shows the color at every tempo, and Preview shows it on your lights. | Measure each light's delay with the Mac's camera, so flashes land on the beat. |
 
 ## Older way to run it
 Double-click `Start Tapo Music.command` (needs Python). Don't run it at the same time as the app.

@@ -41,10 +41,14 @@ anything they must do on their Mac, and keep the double-click launcher working.
 - `temponome.py`: engine and local web server (Engine, BeatTracker, Tapo/Govee control,
   finder, calibration API, `status_text()` plain-words status, `apply_config()` which
   restarts the engine when the light list changes while playing, `make_server(port)`).
-- `ui/`: the pages, served from disk. `main.html` = the compact turntable "deck" (Play,
-  Brightness, Pulse, Together/Chase, status); `settings.html` + `settings.js` = Settings
+- `ui/`: the pages, served from disk. `main.html` = the analog "deck" (2026-11-24 redesign,
+  spec `docs/superpowers/specs/2026-11-24-analog-deck-design.md`): cream VU meter (80–160 BPM
+  over ±40°, needle rests at the tempo and kicks +9° on each beat), one lamp per light from
+  `/api/state` `lamps`, play/stop key, together/chase flip toggle, brightness as 10 amber
+  cells over a hidden range input, pulse fader, nameplate, status strip. Owner rule: **no
+  caption may touch or cross a line**; `settings.html` + `settings.js` = Settings
   window (Lights, Colors, Sound, Timing tabs; finder and webcam calibration live here);
-  `deck.css` (LP60-style look, dark = black deck, light = white deck; accent #e2531b);
+  `deck.css` (analog panel tokens: dark = black panel, light = silver; accent #e2531b);
   `common.js` (`T.api`, `T.saveCfg`, `T.openSettings`).
 - `app/temponome_app.py`: the Mac app shell. Picks a free port (8765 if free), starts the
   server and opens native WebKit windows with pywebview; Settings is a second window;
@@ -59,8 +63,12 @@ anything they must do on their Mac, and keep the double-click launcher working.
   `--sign "Developer ID Application: …"` and optionally `--notary-profile <profile>`
   (uses `build/entitlements.plist`; untested without an account). Uses `build/.venv`.
   The owner asked for a .dmg instead of the earlier .pkg (2026-11-24).
-- **Window sizes** (`app/temponome_app.py`): pywebview sizes include the 32 pt title bar
-  (`TITLE_BAR`). Measured page needs: deck 600x400, Settings 680x640; minimums 440x330 and
+- **Title bar** (`merge_title_bar`): see-through and drawn over the page in both windows
+  (full-size content view, hidden title); pages start with a `.titlebar` strip (30 px,
+  class `pywebview-drag-region`, drags the window). Turning this on shrinks the window by
+  the title bar, so it resets the frame to the full size. Checked in real windows: pages
+  get 600x432 and 680x672.
+- **Window sizes** (`app/temponome_app.py`): window sizes include `TITLE_BAR` (32 pt). Measured page needs: deck 600x400, Settings 680x640; minimums 440x330 and
   480x420. The deck layout shrinks the record with the window (`--s` in main.html) so it
   never scrolls; Settings scrolls under a sticky tab bar. Settings opens beside the main
   window (`settings_position`: right, else left, else the main window slides over; only
@@ -82,7 +90,7 @@ anything they must do on their Mac, and keep the double-click launcher working.
   light-list changes, a Tapo bulb that takes 30 s to answer, and a light unplugged mid-song). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (42 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (51 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -121,8 +129,13 @@ anything they must do on their Mac, and keep the double-click launcher working.
    Uncalibrated: beats fire early by `lead` (the "timing nudge") + half the light's
    latency difference from the average + its offset. Calibrated (device `calib` set):
    early by live round trip + `calib` + nudge + offset. `LOOKAHEAD` = 0.7 s caps the lead.
-6. **Color:** blends Color A → Color B by tempo (60→180 BPM), or a fixed A/B per
-   light. The hue glides toward its target.
+6. **Color:** blends calm (A) → energetic (B) by tempo (60→180 BPM) **around the color
+   wheel** (shortest hue path, saturation linear; white takes the other color's hue) so the
+   middle stays vivid, or a fixed A/B per light. The hue glides toward its target.
+   Settings → Colors: tempo strip + one segmented wheel (24 hues × 6 rings, HSL s 90→65 %,
+   l 50→86 %, white center); every piece is a hue/saturation the lamps accept (outer ring
+   sends 95 % saturation, inner 19 %). `POST /api/preview {"color"}` shows a color on all
+   lights at max brightness for 1.5 s (needs Play).
 7. **Webcam timing calibration** (Settings → Timing): runs in the page with
    `getUserMedia`, so no extra package. It starts the engine itself if needed. Inside the
    app window WebKit may not offer the camera (pywebview has no media-capture delegate;
