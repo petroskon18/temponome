@@ -241,6 +241,66 @@ class DeckState(unittest.TestCase):
         T.ENGINE.beats = 7
         self.assertEqual(T.Handler._state(None)["beats"], 7)
 
+    def test_state_has_lamps_list(self):
+        T.ENGINE.lamps = [{"name": "Desk", "b": 80, "hex": "#ff0000", "ok": True}]
+        try:
+            self.assertEqual(T.Handler._state(None)["lamps"][0]["name"], "Desk")
+        finally:
+            T.ENGINE.lamps = []
+
+
+class ColorBlend(unittest.TestCase):
+    """Calm -> energetic blends go around the color wheel, so the middle stays vivid."""
+
+    def cfg(self, a, b):
+        return {"colorA": a, "colorB": b, "mode": "tempo"}
+
+    def test_blend_goes_around_the_wheel(self):
+        hue, sat = T.pick_color(self.cfg("#0000ff", "#ff8000"), 120)   # halfway
+        self.assertGreaterEqual(sat, 90)               # not a washed-out gray/white
+        self.assertTrue(hue >= 270 or hue <= 30, hue)  # blue -> magenta/red side -> orange
+
+    def test_blend_from_white_keeps_other_hue(self):
+        hue, sat = T.pick_color(self.cfg("#ffffff", "#ff0000"), 120)
+        self.assertEqual((hue, sat), (0, 50))
+
+    def test_ends_are_exact(self):
+        self.assertEqual(T.pick_color(self.cfg("#00ff00", "#ff0000"), 60), (120, 100))
+        self.assertEqual(T.pick_color(self.cfg("#00ff00", "#ff0000"), 180), (0, 100))
+
+    def test_opposite_colors_pick_one_direction(self):
+        a = T.pick_color(self.cfg("#ff0000", "#00ffff"), 119)
+        b = T.pick_color(self.cfg("#ff0000", "#00ffff"), 121)
+        self.assertLess(abs(((a[0] - b[0] + 180) % 360) - 180), 10)   # no jump across the wheel
+
+    def test_live_hex_uses_the_wheel_blend(self):
+        self.assertNotIn(T.live_color_hex(self.cfg("#0000ff", "#ff8000"), 120), ("#ffffff", "#808080"))
+
+
+class Preview(unittest.TestCase):
+    def test_preview_needs_play(self):
+        was = T.ENGINE.running
+        T.ENGINE.running = False
+        try:
+            r = T.preview_color("#ff0000")
+            self.assertFalse(r["ok"])
+            self.assertIn("Play", r["error"])
+        finally:
+            T.ENGINE.running = was
+
+    def test_preview_rejects_bad_color(self):
+        self.assertFalse(T.preview_color("red; drop")["ok"])
+
+    def test_preview_sets_engine_override(self):
+        was = T.ENGINE.running
+        T.ENGINE.running = True
+        try:
+            self.assertTrue(T.preview_color("#00ff00")["ok"])
+            self.assertEqual(T.ENGINE.preview[:2], (120, 100))
+        finally:
+            T.ENGINE.running = was
+            T.ENGINE.preview = None
+
 
 class AppShell(unittest.TestCase):
     def setUp(self):

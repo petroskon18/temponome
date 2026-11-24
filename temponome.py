@@ -558,23 +558,54 @@ def hex_to_rgb(h):
 
 def live_color_hex(cfg, bpm):
     """The lights' current blended colour at full brightness, as #rrggbb (for the platter)."""
-    h, sat = pick_color(cfg, bpm)
-    r, g, b = colorsys.hsv_to_rgb(h / 360.0, sat / 100.0, 1.0)
-    return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+    return hsv_hex(*pick_color(cfg, bpm))
+
+
+def hue_sat(hex_color):
+    """#rrggbb -> (hue 0-359, saturation 0-100) as the lamps take it (brightness is separate)."""
+    h, s, _ = colorsys.rgb_to_hsv(*hex_to_rgb(hex_color))
+    return int(round(h * 360)) % 360, int(round(s * 100))
 
 
 def pick_color(cfg, bpm, which="blend"):
-    a = hex_to_rgb(cfg["colorA"])
+    """The color a light should show now, as (hue, saturation).
+
+    Blending calm (A) -> energetic (B) by tempo goes around the color wheel (shortest way)
+    with saturation changing evenly, so the middle stays vivid; mixing red/green/blue
+    directly would turn opposite colors into white halfway. White (saturation 0) has no
+    hue of its own, so it takes the other color's."""
     if which == "A" or (which == "blend" and cfg["mode"] == "fixed"):
-        rgb = a
-    elif which == "B":
-        rgb = hex_to_rgb(cfg["colorB"])
-    else:
-        b = hex_to_rgb(cfg["colorB"])
-        t = min(max((bpm - 60) / 120, 0.0), 1.0)
-        rgb = tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
-    h, s, _ = colorsys.rgb_to_hsv(*rgb)
-    return int(h * 360) % 360, int(s * 100)
+        return hue_sat(cfg["colorA"])
+    if which == "B":
+        return hue_sat(cfg["colorB"])
+    (ha, sa), (hb, sb) = hue_sat(cfg["colorA"]), hue_sat(cfg["colorB"])
+    if sa == 0:
+        ha = hb
+    if sb == 0:
+        hb = ha
+    t = min(max((bpm - 60) / 120, 0.0), 1.0)
+    diff = ((hb - ha + 180) % 360) - 180
+    return int(round(ha + diff * t)) % 360, int(round(sa + (sb - sa) * t))
+
+
+def hsv_hex(hue, sat):
+    r, g, b = colorsys.hsv_to_rgb((hue % 360) / 360.0, max(0, min(100, sat)) / 100.0, 1.0)
+    return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+
+
+PREVIEW_SECONDS = 1.5
+HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def preview_color(hex_color):
+    """Show one color on every connected light for a moment (Settings -> Colors)."""
+    if not isinstance(hex_color, str) or not HEX_COLOR.match(hex_color):
+        return {"ok": False, "error": "That isn't a color."}
+    if not ENGINE.running:
+        return {"ok": False, "error": "Press Play first so Temponome is connected to your lights."}
+    hue, sat = hue_sat(hex_color)
+    ENGINE.preview = (hue, sat, time.time() + PREVIEW_SECONDS)
+    return {"ok": True}
 
 
 class Engine:
@@ -601,6 +632,8 @@ class Engine:
         self.calib_log = {}
         self.calib_n = 0
         self.light_info = []    # [{"pos", "idx", "ip"}] for the connected lights
+        self.lamps = []         # [{"name", "b", "hex", "ok"}]: what each light shows now (deck lamps)
+        self.preview = None     # (hue, sat, until): a color shown on all lights from Settings
         self.missing = []       # names (or IPs) of lights that did not answer at the last start
         self.restarts = 0
         self.beats = 0          # counts fired beats; the page pulses the platter when it changes
@@ -650,6 +683,8 @@ class Engine:
             self.connecting = False
             self.audio_open = False
             self.dropped = []
+            self.lamps = []
+            self.preview = None
             self.running = False
 
     async def _send(self, light, b, hue, sat):
@@ -820,6 +855,7 @@ class Engine:
                 self.dropped = [L.name for L in lights if L.fails >= 3]
                 self.locked = (tn is not None) if cfg["lock"] else None
 
+                lamps = []
                 for k, L in enumerate(lights):
                     dcfg = live[L.idx] if L.idx < len(live) else {}
                     nudge = cfg["lead"] / 1000.0 + dcfg.get("offset", 0) / 1000.0
@@ -855,6 +891,11 @@ class Engine:
                     diff = ((target_hue - L.hue_now + 180) % 360) - 180
                     L.hue_now = (L.hue_now + diff * min(1.0, dt * 1.5)) % 360
                     hue = int(round(L.hue_now / 4.0) * 4) % 360
+                    pv = self.preview
+                    if pv and now < pv[2]:            # Settings is previewing a color: show it plainly
+                        hue, sat, b = pv[0], max(1, pv[1]), max(1, min(100, int(cfg["maxB"])))
+                        L.hue_now = float(hue)
+                    lamps.append({"name": L.name, "b": b, "hex": hsv_hex(hue, sat), "ok": L.fails < 3})
 
                     if k == 0:
                         self.bpm, self.brightness = tracker.bpm, b
@@ -866,6 +907,9 @@ class Engine:
                         task = asyncio.create_task(self._send(L, b, hue, sat))
                         self.tasks.add(task)               # keep a reference so it can't be garbage-collected
                         task.add_done_callback(self.tasks.discard)
+                self.lamps = lamps
+                if self.preview and now >= self.preview[2]:
+                    self.preview = None
                 await asyncio.sleep(0.01)
 
 
@@ -1027,7 +1071,8 @@ class Handler(BaseHTTPRequestHandler):
                 "connecting": ENGINE.connecting, "audio_open": ENGINE.audio_open,
                 "dropped": ENGINE.dropped,
                 "locked": ENGINE.locked, "missing": ENGINE.missing,
-                "beats": ENGINE.beats, "color": live_color_hex(ENGINE.cfg, ENGINE.bpm or 110)}
+                "beats": ENGINE.beats, "color": live_color_hex(ENGINE.cfg, ENGINE.bpm or 110),
+                "lamps": ENGINE.lamps}
         out["status"], out["status_level"] = status_text(out)
         return out
 
@@ -1077,6 +1122,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/start":
             ENGINE.start()
             self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/preview":
+            self._send(200, json.dumps(preview_color(body.get("color"))))
         elif self.path == "/api/flash":
             ENGINE.flash = True
             self._send(200, json.dumps(self._state()))
