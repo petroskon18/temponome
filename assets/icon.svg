@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Temponome icon: a metronome-shaped table lamp (logo option 2), macOS icon grid -->
+  <defs><clipPath id="body"><rect x="100" y="100" width="824" height="824" rx="185.4"/></clipPath></defs>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="#1d1d1f"/>
+  <ellipse cx="512" cy="832" rx="280" ry="50" fill="#ffd27a" opacity="0.3" clip-path="url(#body)"/>
+  <rect x="493" y="696" width="38" height="114" fill="#8e8e93"/>
+  <ellipse cx="512" cy="816" rx="114" ry="25" fill="#aeaeb2"/>
+  <polygon points="297,709 727,709 588,227 436,227" fill="#f4e7c8"/>
+  <polygon points="335,709 689,709 664,620 360,620" fill="#ffe7a8"/>
+  <line x1="512" y1="658" x2="575" y2="290" stroke="#6b4f2a" stroke-width="13" stroke-linecap="round"/>
+  <rect x="525" y="404" width="70" height="51" rx="10" fill="#6b4f2a"/>
+</svg>

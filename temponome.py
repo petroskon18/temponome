@@ -1,0 +1,1142 @@
+#!/usr/bin/env python3
+"""
+Temponome: makes Tapo and Govee lights pulse to music (macOS).
+
+Run:  python3 temponome.py   (or the double-click launcher / Temponome.app)
+It opens a page in your browser (served only on your own Mac) where you pick
+colors, choose the audio input, and press Start.
+
+Install once:  pip3 install tapo sounddevice numpy
+"""
+import asyncio
+import colorsys
+import copy
+import errno
+import json
+import os
+import re
+import socket
+import sys
+import threading
+import time
+import webbrowser
+from collections import deque
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import numpy as np
+
+PORT = 8765
+SAMPLE_RATE = 44100
+BLOCK = 512
+CONNECT_TIMEOUT = 5.0   # s: give up on a light that doesn't answer (the tapo default is 30 s)
+LOOKAHEAD = 0.7         # s: how far ahead beats are scheduled (max useful light lead)
+CONFIG_DIR = os.path.expanduser("~/Library/Application Support/Temponome")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "settings.json")
+OLD_CONFIG_PATH = os.path.expanduser("~/.tapo_music_ui.json")   # before the rename
+# the ui/ folder: next to this file, or inside the bundle when packaged by PyInstaller
+UI_DIR = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "ui")
+
+DEFAULTS = {
+    "email": "",
+    "password": "",
+    "device": "",
+    "devices": [{"ip": "", "model": "l530", "color": "blend", "offset": 0, "calib": None}],
+    "multi": "sync",        # "sync" = all pulse together, "chase" = take turns
+    "colorA": "#2a5bff",   # calm / slow tempo
+    "colorB": "#ff2a4d",   # energetic / fast tempo
+    "mode": "tempo",       # "tempo" = blend A->B by tempo, "fixed" = only color A
+    "minB": 15,
+    "maxB": 100,
+    "sensitivity": 1.5,
+    "lock": True,          # steady tempo grid (recommended for microphone)
+    "lead": 60,            # ms to fire early to cover bulb lag
+    "smooth": 0.4,         # 0 = snappy short pulses, 1 = long smooth pulses
+}
+
+
+MODELS = ("l530", "l535", "l630", "l900", "l920", "l930", "govee")
+
+
+def clean_devices(devs):
+    out = []
+    for d in devs if isinstance(devs, list) else []:
+        if not isinstance(d, dict):
+            continue
+        model = d.get("model", "l530")
+        color = d.get("color", "blend")
+        out.append({"ip": str(d.get("ip", "")).strip(),
+                    "model": model if model in MODELS else "l530",
+                    "color": color if color in ("blend", "A", "B") else "blend",
+                    "offset": max(-200, min(300, int(d.get("offset", 0) or 0))),
+                    # webcam-measured delay (ms) between the command finishing its round trip
+                    # and the bulb visibly lighting up; None = not calibrated
+                    "calib": None if d.get("calib") is None else max(-150, min(600, int(d["calib"]))),
+                    "name": str(d.get("name", "") or "")[:60]})   # label from the light finder
+    return out or copy.deepcopy(DEFAULTS["devices"])
+
+
+def migrate_config():
+    """Copy settings from the old pre-rename file once. Never overwrites the new file;
+    the old file is left in place. Returns True if it copied."""
+    if os.path.exists(CONFIG_PATH) or not os.path.exists(OLD_CONFIG_PATH):
+        return False
+    try:
+        with open(OLD_CONFIG_PATH) as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    save_config(data)
+    return os.path.exists(CONFIG_PATH)
+
+
+def _read_json(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def load_config():
+    migrate_config()
+    cfg = copy.deepcopy(DEFAULTS)
+    saved = _read_json(CONFIG_PATH)
+    if saved is None:            # unreadable: fall back to the pre-rename file rather than lose everything
+        saved = _read_json(OLD_CONFIG_PATH) or {}
+    cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
+    cfg["devices"] = clean_devices(cfg["devices"])
+    if saved.get("ip") and not any(d["ip"] for d in cfg["devices"]):  # old single-bulb config
+        cfg["devices"][0]["ip"] = saved["ip"]
+    return cfg
+
+
+CONFIG_LOCK = threading.RLock()   # settings are changed from several web-request threads
+
+
+def save_config(cfg):
+    """Write atomically (temp file, then rename) so a crash or quit mid-write can't leave
+    a half-written file; the file is never world-readable."""
+    with CONFIG_LOCK:
+        tmp = CONFIG_PATH + ".tmp"
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(cfg, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, CONFIG_PATH)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+SECOND_COPY_MSG = ("Another copy of Temponome (or the old Tapo Music launcher) is already running "
+                   "and using the Govee connection. Quit it, then press Play again.")
+
+
+class GoveeBus:
+    """Govee "LAN Control" API: JSON over UDP, no account or extra package needed.
+    Commands go to the lamp's port 4003; lamps answer (scan, devStatus) to our port 4002.
+    Discovery is a multicast "scan" to 239.255.255.250:4001. LAN Control must be switched
+    on for each lamp in the Govee Home app. One shared socket on 4002 receives all replies."""
+    CMD_PORT, REPLY_PORT = 4003, 4002
+    SCAN_ADDR = ("239.255.255.250", 4001)
+
+    def __init__(self):
+        self.sock = None
+        self.lock = threading.Lock()
+        self.waiters = []          # [(predicate(ip, msg), list_to_fill, threading.Event)]
+
+    def _ensure(self):
+        with self.lock:
+            if self.sock:
+                return
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # no SO_REUSEPORT on purpose: a second Temponome (or the old launcher) must fail
+            # here instead of silently sharing the port and losing half the lamps' replies
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            try:
+                s.bind(("", self.REPLY_PORT))
+            except OSError:
+                s.close()
+                raise OSError(errno.EADDRINUSE, SECOND_COPY_MSG)
+            self.sock = s
+            threading.Thread(target=self._recv_loop, daemon=True).start()
+
+    def close(self):
+        """Release port 4002 (on quit, or before a test loads a fresh copy)."""
+        with self.lock:
+            s, self.sock = self.sock, None
+        if s:
+            s.close()
+
+    def _recv_loop(self):
+        sock = self.sock
+        while True:
+            try:
+                data, addr = sock.recvfrom(4096)
+            except OSError:
+                if self.sock is not sock:   # closed: stop this thread
+                    return
+                time.sleep(0.05)            # a lasting network error must not spin the CPU
+                continue
+            try:
+                msg = json.loads(data.decode("utf-8", "replace")).get("msg", {})
+            except Exception:
+                continue
+            for pred, items, evt in list(self.waiters):
+                if pred(addr[0], msg):
+                    items.append((addr[0], msg))
+                    evt.set()
+
+    def send(self, ip, cmd, data, addr=None):
+        self._ensure()
+        payload = json.dumps({"msg": {"cmd": cmd, "data": data}}).encode()
+        self.sock.sendto(payload, addr or (ip, self.CMD_PORT))
+
+    def _collect(self, pred, send, timeout, first_only):
+        items, evt = [], threading.Event()
+        w = (pred, items, evt)
+        self.waiters.append(w)
+        try:
+            send()
+            if first_only:
+                evt.wait(timeout)
+            else:
+                time.sleep(timeout)
+        finally:
+            self.waiters.remove(w)
+        return items
+
+    def status(self, ip, timeout=2.0):
+        """Ask one lamp for its state; None if it does not answer (LAN Control off / wrong IP)."""
+        got = self._collect(lambda a, m: a == ip and m.get("cmd") == "devStatus",
+                            lambda: self.send(ip, "devStatus", {}), timeout, True)
+        return got[0][1].get("data", {}) if got else None
+
+    @staticmethod
+    def _local_ips():
+        ips = []
+        try:   # the address this Mac uses on the home network (no packet is sent)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("10.255.255.255", 1))
+            ips.append(s.getsockname()[0])
+            s.close()
+        except OSError:
+            pass
+        return ips + ["127.0.0.1"]
+
+    def scan(self, timeout=2.5):
+        """Find Govee lamps with LAN Control on. Returns [{"ip", "sku", "device"}].
+        The search is sent out of each local interface; if every send is refused
+        (usually macOS Local Network permission), raises OSError."""
+        self._ensure()
+        payload = json.dumps({"msg": {"cmd": "scan", "data": {"account_topic": "reserve"}}}).encode()
+        errors = []
+
+        def send_all():
+            sent = 0
+            for ip in self._local_ips():
+                try:
+                    self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
+                    self.sock.sendto(payload, self.SCAN_ADDR)
+                    sent += 1
+                except OSError as e:
+                    errors.append(f"{ip}: {e.strerror or e}")
+            if not sent:
+                raise OSError("could not send the search (" + "; ".join(errors) + "). Allow Terminal under "
+                              "System Settings > Privacy & Security > Local Network")
+
+        got = self._collect(lambda a, m: m.get("cmd") == "scan", send_all, timeout, False)
+        out = {}
+        for ip, m in got:
+            d = m.get("data", {})
+            out[d.get("ip") or ip] = {"ip": d.get("ip") or ip, "sku": d.get("sku", ""), "device": d.get("device", "")}
+        return list(out.values())
+
+
+GOVEE = GoveeBus()
+
+
+def scan_tapo(email, password, timeout=3):
+    """Find Tapo color lights on the home network with the tapo library's broadcast
+    discovery (it logs in to each device, so it needs the Tapo account).
+    Returns [{"ip", "model", "name"}] for lights this app can drive."""
+    import re
+    from tapo import ApiClient
+
+    async def run():
+        out = {}
+        client = ApiClient(email, password)
+        async for r in await client.discover_devices("255.255.255.255", timeout):
+            try:
+                d = r.get()
+            except Exception:
+                continue          # a device that refused the login or is not supported
+            kind = type(d).__name__
+            if kind not in ("ColorLight", "RgbLightStrip", "RgbicLightStrip"):
+                continue          # plugs, cameras, white-only bulbs: no color to pulse
+            m = re.search(r"l\d{3}", str(d.model).lower())
+            model = m.group(0) if m and m.group(0) in MODELS else {
+                "ColorLight": "l530", "RgbLightStrip": "l900", "RgbicLightStrip": "l920"}[kind]
+            ip = d.address[0]
+            out[ip] = {"ip": ip, "model": model, "name": str(d.nickname or "")}
+        return list(out.values())
+
+    return asyncio.run(run())
+
+
+def scan_all(cfg):
+    """Search for Tapo and Govee lights at the same time (about 3 s).
+    Returns {"lights": [{"brand", "ip", "model", "name"}], "notes": [str]}."""
+    lights, notes = [], []
+    res = {}
+
+    def tapo():
+        if not (cfg.get("email") and cfg.get("password")):
+            res["tapo_note"] = "To find Tapo lights, enter your Tapo email and password in Setup first."
+            return
+        try:
+            res["tapo"] = scan_tapo(cfg["email"], cfg["password"])
+        except Exception as e:
+            res["tapo_note"] = f"Tapo search failed: {e}"
+
+    def govee():
+        try:
+            res["govee"] = GOVEE.scan()
+        except OSError as e:
+            res["govee_note"] = SECOND_COPY_MSG if e.errno == errno.EADDRINUSE else f"Govee search failed: {e}"
+        except Exception as e:
+            res["govee_note"] = f"Govee search failed: {e}"
+
+    threads = [threading.Thread(target=f) for f in (tapo, govee)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(15)
+    for l in res.get("tapo", []):
+        lights.append({"brand": "Tapo", **l})
+    for l in res.get("govee", []):
+        lights.append({"brand": "Govee", "ip": l["ip"], "model": "govee",
+                       "name": f"Govee {l.get('sku') or 'lamp'}"})
+    notes += [res[k] for k in ("tapo_note", "govee_note") if k in res]
+    return {"lights": lights, "notes": notes}
+
+
+class GoveeLamp:
+    """Async handle with the same role as a tapo handle. UDP is fire-and-forget, so a send
+    returns at once; the real delay is found by the webcam calibration."""
+    min_gap = 0.08          # s between updates, so the lamp's Wi-Fi chip is not flooded
+
+    def __init__(self, ip):
+        self.ip = ip
+        self.last_b = None
+        self.last_rgb = None
+
+    async def connect(self):
+        try:
+            st = await asyncio.get_running_loop().run_in_executor(None, GOVEE.status, self.ip)
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                raise ConnectionError(SECOND_COPY_MSG)
+            raise ConnectionError(f"Could not reach the Govee lamp ({e.strerror or e}). Check its IP address, "
+                                  "and allow Terminal under System Settings > Privacy & Security > "
+                                  "Local Network. LAN Control must be on in the Govee Home app.")
+        if st is None:
+            raise ConnectionError("Govee lamp did not answer. In the Govee Home app open the lamp, "
+                                  "Settings, and switch on LAN Control; also check its IP address.")
+        return self
+
+    async def on(self):
+        GOVEE.send(self.ip, "turn", {"value": 1})
+
+    async def send_state(self, b, hue, sat):
+        r, g, bl = colorsys.hsv_to_rgb((hue % 360) / 360.0, max(0, min(100, sat)) / 100.0, 1.0)
+        rgb = (int(round(r * 255)), int(round(g * 255)), int(round(bl * 255)))
+        if b != self.last_b:          # brightness first: it carries the beat
+            GOVEE.send(self.ip, "brightness", {"value": int(max(1, min(100, b)))})
+            self.last_b = b
+        if rgb != self.last_rgb:
+            GOVEE.send(self.ip, "colorwc", {"color": {"r": rgb[0], "g": rgb[1], "b": rgb[2]},
+                                            "colorTemInKelvin": 0})
+            self.last_rgb = rgb
+
+
+class BeatTracker:
+    """Onset detection + tempo estimation + a steady beat grid (good for noisy mic input)."""
+    FPS = SAMPLE_RATE / BLOCK
+
+    def __init__(self):
+        self.win = 1024
+        self.freqs = np.fft.rfftfreq(self.win, 1 / SAMPLE_RATE)
+        self.mask = (self.freqs >= 40) & (self.freqs <= 250)
+        self.bass_mask = (self.freqs >= 40) & (self.freqs <= 150)
+        self.ring = np.zeros(self.win, dtype=np.float32)
+        self.prev = None
+        self.flux_hist = deque(maxlen=int(self.FPS * 8))
+        self.flux_t = deque(maxlen=int(self.FPS * 8))   # time of each flux_hist entry
+        self.phase_votes = 0
+        self.bass_hist = deque(maxlen=int(self.FPS * 1.0))
+        self.lflux_hist = deque(maxlen=int(self.FPS * 1.5))
+        self.peak_rms = 1e-4       # auto-gain: recent loudest level
+        self.rms = 0.0             # raw input level (for the meter / silence check)
+        self.level = 0.0           # loudness relative to recent peak, 0..1
+        self.bpm = 110.0
+        self.last_onset = 0.0
+        self.onset_total = 0
+        self.last_est = 0.0
+        self.t0 = None
+        self.off_grid = 0
+        self.last_fired = 0.0
+        self.onset_flag = False
+        self.onset_count = 0
+        self.cand, self.cand_n = 0.0, 0
+
+    # called from the audio thread for every block
+    def process(self, block, sens, now=None):
+        now = now or time.time()
+        self.ring = np.concatenate([self.ring[len(block):], block])
+        mag = np.abs(np.fft.rfft(self.ring * np.hanning(self.win)))
+        band = np.log1p(mag[self.mask] * 10.0)
+        flux = 0.0 if self.prev is None else float(np.maximum(band - self.prev, 0).sum())
+        self.prev = band
+        bass = float(mag[self.bass_mask].sum())
+        rms = float(np.sqrt(np.mean(block ** 2)))
+        self.rms = 0.8 * self.rms + 0.2 * rms
+        # auto-gain: follow the loudest recent level (slow ~10 s decay), so quiet mics work too
+        self.peak_rms = max(rms, self.peak_rms * 0.9989, 1e-5)
+        rel = rms / self.peak_rms
+        self.level = 0.9 * self.level + 0.1 * min(rel * 1.4, 1.0)
+        self.flux_hist.append(flux)
+        self.flux_t.append(now)
+        audible = rms > 1e-5 and rel > 0.12
+
+        # detector 1: bass energy jumps above its recent average
+        avg = float(np.mean(self.bass_hist)) if len(self.bass_hist) > 10 else 0.0
+        self.bass_hist.append(bass)
+        hit_bass = avg > 0 and bass > avg * sens
+        # detector 2: sudden rise in low/mid energy (works when the mic cuts deep bass)
+        hit_flux = False
+        if len(self.lflux_hist) > 20:
+            arr = np.asarray(self.lflux_hist)
+            hit_flux = flux > arr.mean() + (sens - 1.0) * 4.0 * arr.std() and flux > 1e-3
+        self.lflux_hist.append(flux)
+        onset = (audible and (hit_bass or hit_flux)
+                 and now - self.last_onset > 0.22)
+        if onset:
+            self.last_onset = now
+            self.onset_total += 1
+            self.onset_flag = True
+            self.onset_count += 1
+            self._align(now)
+        if now - self.last_est > 0.5 and len(self.flux_hist) > self.FPS * 4:
+            self.last_est = now
+            self._estimate_tempo(now)
+
+    def _align(self, now):
+        T = 60.0 / self.bpm
+        if self.t0 is None:
+            self.t0 = now
+            return
+        k = round((now - self.t0) / T)
+        err = now - (self.t0 + k * T)
+        if abs(err) < 0.3 * T:
+            self.t0 += 0.25 * err      # gently pull the grid onto the real hits
+            self.off_grid = 0
+        else:
+            self.off_grid += 1         # off-beat / noise: ignore it
+            if self.off_grid >= 8:     # grid is clearly wrong: restart from here
+                self.t0, self.off_grid = now, 0
+
+    def _estimate_tempo(self, now):
+        x = np.array(self.flux_hist, dtype=np.float64)
+        x -= x.mean()
+        if x.std() < 1e-6:
+            return
+        n = len(x)
+        f = np.fft.rfft(x, 2 * n)
+        ac = np.fft.irfft(f * np.conj(f))[:n]
+        lo, hi = int(self.FPS * 60 / 170), int(self.FPS * 60 / 70)
+        lags = np.arange(lo, hi)
+        bpms = 60.0 * self.FPS / lags
+        weight = np.exp(-0.5 * (np.log2(bpms / 115.0) / 0.8) ** 2)
+        score = ac[lo:hi] * weight
+        i = int(np.argmax(score))
+        if 0 < i < len(score) - 1:     # parabolic refine
+            y0, y1, y2 = score[i - 1], score[i], score[i + 1]
+            den = y0 - 2 * y1 + y2
+            off = 0.5 * (y0 - y2) / den if den else 0.0
+        else:
+            off = 0.0
+        new = 60.0 * self.FPS / (lags[i] + off)
+        if abs(np.log(new / self.bpm)) < 0.08:
+            self._set_bpm(0.8 * self.bpm + 0.2 * new, now)
+            self.cand_n = 0
+        else:                           # big change: only accept if it repeats
+            if self.cand and abs(np.log(new / self.cand)) < 0.05:
+                self.cand_n += 1
+            else:
+                self.cand, self.cand_n = new, 1
+            if self.cand_n >= 3:
+                self._set_bpm(new, now)
+                self.cand_n = 0
+        self._check_phase()
+
+    def _check_phase(self):
+        """Make sure the grid sits on the strong beats, not between them.
+        Onsets alone can lock it half a beat off (e.g. onto hi-hats between kicks), so
+        compare the summed low-band flux along every possible grid position over the
+        last few seconds and move the grid if a clearly different position wins twice."""
+        if self.t0 is None or len(self.flux_hist) < self.FPS * 4:
+            return
+        x = np.asarray(self.flux_hist, dtype=np.float64)
+        ts = np.asarray(self.flux_t)
+        lag = self.FPS * 60.0 / self.bpm
+        n = len(x)
+        ks = np.arange(int((n - 1) / lag))
+        if len(ks) < 4:
+            return
+        phis = np.arange(int(lag))
+        idx = (n - 1 - phis[:, None] - ks[None, :] * lag).round().astype(int)
+        # take the local max within +-1 frame so small timing wobble doesn't matter
+        lo, hi = np.clip(idx - 1, 0, n - 1), np.clip(idx + 1, 0, n - 1)
+        score = np.maximum(np.maximum(x[lo], x[np.clip(idx, 0, n - 1)]), x[hi]).sum(axis=1)
+        best = int(np.argmax(score))
+        beat = ts[n - 1 - best]
+        T = 60.0 / self.bpm
+        err = (beat - self.t0 + T / 2) % T - T / 2
+        cur = int(round(((ts[-1] - self.t0) % T) * self.FPS)) % len(phis)   # current grid position
+        if abs(err) > 0.2 * T and score[best] > 1.15 * score[cur]:
+            self.phase_votes += 1
+            if self.phase_votes >= 2:
+                self.t0 = beat
+                self.off_grid = 0
+                self.phase_votes = 0
+        else:
+            self.phase_votes = 0
+
+    def _set_bpm(self, new, now):
+        if self.t0 is not None:        # keep the grid phase when the period changes
+            T = 60.0 / self.bpm
+            k = np.floor((now - self.t0) / T)
+            self.t0 += k * T
+        self.bpm = new
+
+    # Beat events: each is the time at which a beat will (or did) land.
+    # Locked mode looks ahead so every light can be scheduled at its own lead time.
+    def poll_events(self, now, lookahead, locked):
+        if not locked:
+            fire, self.onset_flag = self.onset_flag, False
+            return [now] if fire else []
+        self.onset_flag = False
+        if self.t0 is None or now - self.last_onset > 2.5:
+            return []
+        T = 60.0 / self.bpm
+        tt = now + lookahead
+        beat = self.t0 + np.floor((tt - self.t0) / T) * T
+        if beat > self.last_fired + 0.5 * T:
+            self.last_fired = beat
+            return [beat]
+        return []
+
+    def time_to_next(self, now):
+        if self.t0 is None or now - self.last_onset > 2.5:
+            return None
+        T = 60.0 / self.bpm
+        return T - ((now - self.t0) % T)
+
+
+def hex_to_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+
+def live_color_hex(cfg, bpm):
+    """The lights' current blended colour at full brightness, as #rrggbb (for the platter)."""
+    h, sat = pick_color(cfg, bpm)
+    r, g, b = colorsys.hsv_to_rgb(h / 360.0, sat / 100.0, 1.0)
+    return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+
+
+def pick_color(cfg, bpm, which="blend"):
+    a = hex_to_rgb(cfg["colorA"])
+    if which == "A" or (which == "blend" and cfg["mode"] == "fixed"):
+        rgb = a
+    elif which == "B":
+        rgb = hex_to_rgb(cfg["colorB"])
+    else:
+        b = hex_to_rgb(cfg["colorB"])
+        t = min(max((bpm - 60) / 120, 0.0), 1.0)
+        rgb = tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
+    h, s, _ = colorsys.rgb_to_hsv(*rgb)
+    return int(h * 360) % 360, int(s * 100)
+
+
+class Engine:
+    def __init__(self):
+        self.cfg = load_config()
+        self.running = False
+        self.error = ""
+        self.bpm = 0.0
+        self.brightness = 0
+        self.lights = 0
+        self.lat = []
+        self.level = 0.0
+        self.onsets = 0
+        self.locked = None
+        self.tasks = set()
+        self.flash = False
+        self.rms = 0.0
+        self.stop_evt = threading.Event()
+        self.thread = None
+        # webcam calibration: while calib_until is in the future, music output pauses and
+        # the page drives the lights one command at a time through calib_q
+        self.calib_until = 0.0
+        self.calib_q = deque()
+        self.calib_log = {}
+        self.calib_n = 0
+        self.light_info = []    # [{"pos", "idx", "ip"}] for the connected lights
+        self.missing = []       # names (or IPs) of lights that did not answer at the last start
+        self.restarts = 0
+        self.beats = 0          # counts fired beats; the page pulses the platter when it changes
+        self.restart_lock = threading.Lock()
+        self.want_running = False   # what the user asked for (Play/Stop); a restart honours it
+        self.connecting = False     # True while connecting to the lights
+        self.audio_open = False     # True once the audio input is open
+        self.dropped = []           # names of lights that stopped answering while playing
+
+    def restart(self):
+        """Stop, wait until the engine thread has really finished, then start again —
+        unless the user pressed Stop meanwhile."""
+        with self.restart_lock:
+            self.restarts += 1
+            self.stop_evt.set()
+            t = self.thread
+            if t:
+                t.join(15.0)      # connects are capped at CONNECT_TIMEOUT, so this ends quickly
+            if self.want_running and not (t and t.is_alive()):
+                self._start_thread()
+
+    def start(self):
+        """User pressed Play."""
+        self.want_running = True
+        self._start_thread()
+
+    def stop(self):
+        """User pressed Stop (or the app is quitting)."""
+        self.want_running = False
+        self.stop_evt.set()
+
+    def _start_thread(self):
+        if self.running:
+            return
+        self.error = ""
+        self.stop_evt.clear()
+        self.running = True
+        self.thread = threading.Thread(target=self._thread, daemon=True)
+        self.thread.start()
+
+    def _thread(self):
+        try:
+            asyncio.run(self._run())
+        except Exception as e:
+            self.error = f"{type(e).__name__}: {e}"
+        finally:
+            self.connecting = False
+            self.audio_open = False
+            self.dropped = []
+            self.running = False
+
+    async def _send(self, light, b, hue, sat):
+        t_start = time.time()
+        try:
+            h = light.handle
+            if isinstance(h, GoveeLamp):
+                await h.send_state(b, hue, sat)
+            else:
+                await self._send_tapo(h, b, hue, sat)
+            light.last_sent = (b, hue, sat)
+            light.lat = 0.7 * light.lat + 0.3 * (time.time() - t_start)
+            light.fails = 0
+        except Exception as e:
+            light.fails += 1          # 3 failures in a row = the light stopped answering
+            self.error = f"{light.ip}: {e}"
+        finally:
+            light.last_send_t = time.time()
+            light.busy = False
+
+    @staticmethod
+    async def _send_tapo(h, b, hue, sat):
+        try:
+            await asyncio.wait_for(h.set().brightness(b).hue_saturation(hue, sat).send(h), 3.0)
+        except AttributeError:
+            await asyncio.wait_for(h.set_brightness(b), 3.0)
+            await asyncio.wait_for(h.set_hue_saturation(hue, sat), 3.0)
+
+    def calib_flash(self, pos, b, timeout=5.0):
+        """Called from a web request: set light `pos` to brightness b and wait for the command.
+        Returns {"t": ms when the command started, "lat": round trip ms, "ok": bool}."""
+        self.calib_n += 1
+        rid = self.calib_n
+        self.calib_q.append((rid, pos, b))
+        end = time.time() + timeout
+        while time.time() < end:
+            r = self.calib_log.pop(rid, None)
+            if r:
+                return r
+            time.sleep(0.005)
+        return {"ok": False, "t": 0, "lat": 0}
+
+    async def _calib_send(self, light, rid, b):
+        while light.busy:
+            await asyncio.sleep(0.003)
+        light.busy = True
+        t = time.time()
+        await self._send(light, b, 0, 1)     # near-white, only brightness changes
+        self.calib_log[rid] = {"ok": light.last_sent[0] == b, "t": t * 1000.0,
+                               "lat": (time.time() - t) * 1000.0}
+
+    async def _run(self):
+        import sounddevice as sd
+
+        c = self.cfg
+        devs = [(i, d) for i, d in enumerate(c["devices"]) if d["ip"]]
+        if not devs:
+            raise ValueError("Add at least one light.")
+        client = None
+        if any(d["model"] != "govee" for _, d in devs):
+            if not (c["email"] and c["password"]):
+                raise ValueError("Tapo lights need your Tapo account email and password (Setup section).")
+            from tapo import ApiClient
+            try:
+                client = ApiClient(c["email"], c["password"], timeout_s=int(CONNECT_TIMEOUT))
+            except TypeError:       # older tapo versions have no timeout option
+                client = ApiClient(c["email"], c["password"])
+
+        async def connect(i, d):
+            if d["model"] == "govee":
+                h = await GoveeLamp(d["ip"]).connect()
+            else:
+                h = await getattr(client, d["model"])(d["ip"])
+            await h.on()
+            L = Light(h, i, d["ip"])
+            L.name = d.get("name") or d["ip"]
+            L.min_gap = getattr(h, "min_gap", 0.07)
+            return L
+
+        async def connect_capped(i, d):   # a switched-off bulb must not hold up the others
+            return await asyncio.wait_for(connect(i, d), CONNECT_TIMEOUT)
+
+        self.connecting = True
+        try:
+            results = await asyncio.gather(*[connect_capped(i, d) for i, d in devs],
+                                           return_exceptions=True)
+        finally:
+            self.connecting = False
+        if self.stop_evt.is_set():          # Stop or a newer restart arrived while connecting
+            return
+        lights, problems, missing = [], [], []
+        for (i, d), r in zip(devs, results):
+            if isinstance(r, Exception):
+                problems.append(f"{d['ip']}: " + ("did not answer in time" if isinstance(r, asyncio.TimeoutError)
+                                                  else f"{type(r).__name__}: {r}" if not str(r) else str(r)))
+                missing.append(d.get("name") or d["ip"])
+            else:
+                lights.append(r)
+        self.missing = missing
+        if not lights:
+            raise ValueError("Could not connect to any light. " + " | ".join(problems))
+        self.lights = len(lights)
+        self.light_info = [{"pos": k, "idx": L.idx, "ip": L.ip} for k, L in enumerate(lights)]
+        if problems:
+            self.error = "Skipped: " + " | ".join(problems)
+
+        tracker = BeatTracker()
+
+        def callback(indata, frames, t, status):
+            tracker.process(indata[:, 0].astype(np.float32), self.cfg["sensitivity"])
+
+        dev = c["device"]
+        dev = int(dev) if str(dev).isdigit() else (dev or None)
+        beat_n = 0
+        events = deque(maxlen=16)
+        ui_beats = deque(maxlen=16)
+        last_t = time.time()
+        t_start = time.time()
+        loud_t = time.time()
+        with sd.InputStream(device=dev, channels=1, samplerate=SAMPLE_RATE,
+                            blocksize=BLOCK, callback=callback):
+            self.audio_open = True
+            while not self.stop_evt.is_set():
+                cfg = self.cfg  # re-read each loop so UI changes apply live
+                now = time.time()
+                dt = now - last_t
+                last_t = now
+
+                if now < self.calib_until:          # webcam calibration owns the lights
+                    while self.calib_q:
+                        rid, pos, b = self.calib_q.popleft()
+                        if 0 <= pos < len(lights):
+                            task = asyncio.create_task(self._calib_send(lights[pos], rid, b))
+                            self.tasks.add(task)
+                            task.add_done_callback(self.tasks.discard)
+                        else:
+                            self.calib_log[rid] = {"ok": False, "t": 0, "lat": 0}
+                    self.lat = [int(L.lat * 1000) for L in lights]
+                    await asyncio.sleep(0.003)
+                    continue
+                self.calib_q.clear()
+
+                for bt in tracker.poll_events(now, LOOKAHEAD, cfg["lock"]):
+                    beat_n += 1
+                    events.append((bt, beat_n))
+                    ui_beats.append(bt)
+                while ui_beats and ui_beats[0] <= now:   # count a beat when it lands, for the platter
+                    ui_beats.popleft()
+                    self.beats += 1
+                self.level, self.onsets, self.rms = tracker.level, tracker.onset_count, tracker.rms
+                if tracker.rms > 2e-5:
+                    loud_t = now
+                    if self.error == SILENT_MSG:
+                        self.error = ""
+                elif now - loud_t > 3 and now - t_start > 3:
+                    self.error = SILENT_MSG
+                manual = self.flash
+                self.flash = False
+                no_beats = now - tracker.last_onset > 2.5
+                n = len(lights)
+                half_life = 0.08 + 0.45 * float(cfg["smooth"])
+                span = cfg["maxB"] - cfg["minB"]
+                peak = 0.6 + 0.4 * min(tracker.level * 1.5, 1.0)  # quiet music -> softer peaks
+                mean_lat = sum(L.lat for L in lights) / n
+                tn = tracker.time_to_next(now) if cfg["lock"] else None
+                live = cfg["devices"]
+                self.lat = [int(L.lat * 1000) for L in lights]
+                self.dropped = [L.name for L in lights if L.fails >= 3]
+                self.locked = (tn is not None) if cfg["lock"] else None
+
+                for k, L in enumerate(lights):
+                    dcfg = live[L.idx] if L.idx < len(live) else {}
+                    nudge = cfg["lead"] / 1000.0 + dcfg.get("offset", 0) / 1000.0
+                    if dcfg.get("calib") is not None:
+                        # calibrated: fire early by this light's live round trip plus the
+                        # webcam-measured time the bulb takes to visibly brighten
+                        lead = L.lat + dcfg["calib"] / 1000.0 + nudge
+                    else:
+                        # slower-than-average lights fire earlier, faster ones later, so they land together
+                        lead = nudge + max(-0.15, min(0.25, 0.5 * (L.lat - mean_lat)))
+                    lead = max(-0.2, min(LOOKAHEAD - 0.05, lead))
+
+                    fired = False
+                    for bt, idx in events:
+                        if idx > L.last_idx and bt - lead <= now:
+                            L.last_idx = idx
+                            if cfg["multi"] == "sync" or n == 1 or (idx - 1) % n == k:
+                                fired = True
+                    if fired or manual:
+                        L.env = 1.0
+                    else:
+                        L.env *= 0.5 ** (dt / half_life)
+                        if no_beats and tracker.rms > 2e-5:   # fallback: follow loudness so the light never just sits
+                            L.env = max(L.env, 0.7 * min(tracker.level * 2.0, 1.0))
+                    b = int(round((cfg["minB"] + span * L.env * peak) / 10.0) * 10)
+                    b = max(1, min(100, b))
+
+                    which = dcfg.get("color", "blend")
+                    target_hue, sat = pick_color(cfg, tracker.bpm, which)
+                    sat = max(1, min(100, sat))
+                    if L.hue_now is None:
+                        L.hue_now = float(target_hue)
+                    diff = ((target_hue - L.hue_now + 180) % 360) - 180
+                    L.hue_now = (L.hue_now + diff * min(1.0, dt * 1.5)) % 360
+                    hue = int(round(L.hue_now / 4.0) * 4) % 360
+
+                    if k == 0:
+                        self.bpm, self.brightness = tracker.bpm, b
+                    changed = (b, hue, sat) != L.last_sent
+                    # keep the link free just before this light's next peak so the peak isn't queued behind a fade step
+                    soon = (tn is not None and 0 < tn - lead < L.lat + 0.04 and b < L.last_sent[0])
+                    if changed and not soon and not L.busy and now - L.last_send_t >= L.min_gap:
+                        L.busy = True   # each light sends on its own, in parallel
+                        task = asyncio.create_task(self._send(L, b, hue, sat))
+                        self.tasks.add(task)               # keep a reference so it can't be garbage-collected
+                        task.add_done_callback(self.tasks.discard)
+                await asyncio.sleep(0.01)
+
+
+class Light:
+    def __init__(self, handle, idx, ip):
+        self.handle, self.idx, self.ip = handle, idx, ip
+        self.env = 0.0
+        self.lat = 0.10      # measured command round-trip, seconds
+        self.last_idx = 0
+        self.busy_since = 0.0
+        self.hue_now = None
+        self.last_sent = (-1, -1, -1)
+        self.last_send_t = 0.0
+        self.busy = False
+        self.min_gap = 0.07  # s between commands
+        self.fails = 0       # commands failed in a row
+        self.name = ip
+
+
+ENGINE = Engine()
+
+
+def list_inputs():
+    try:
+        import sounddevice as sd
+        out = []
+        for i, d in enumerate(sd.query_devices()):
+            if d["max_input_channels"] > 0:
+                out.append({"id": str(i), "name": d["name"]})
+        return out
+    except Exception as e:
+        return [{"id": "", "name": f"(could not list inputs: {e})"}]
+
+
+SILENT_MSG = ("No sound is reaching Temponome. If you use the microphone, allow Temponome "
+              "(or Terminal) in System Settings > Privacy & Security > Microphone. "
+              "Also check the audio input in Settings > Sound.")
+
+
+def _plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def status_text(st):
+    """One plain-words line for the status bar, and its level:
+    "ok" | "wait" | "warn" | "error" | "idle". Raw errors stay in st["error"] for details."""
+    err = st.get("error") or ""
+    if not st.get("running"):
+        devices = (st.get("cfg") or {}).get("devices")
+        if devices is not None and not any(d.get("ip") for d in devices):
+            return "No lights yet · find them in Settings", "idle"
+        if not err or err == SILENT_MSG:
+            return "Ready · press Play", "idle"
+        if SECOND_COPY_MSG in err:
+            return SECOND_COPY_MSG, "error"
+        if "need your Tapo account" in err:
+            return "Enter your Tapo email and password in Settings > Lights.", "error"
+        if "credential" in err.lower():
+            return ("Your Tapo login was refused. Check the email and password in Settings > Lights.",
+                    "error")
+        if "Could not connect to any light" in err:
+            return ("None of your lights answered. Check they're switched on and on the same Wi-Fi, "
+                    "then press Play.", "error")
+        if "PortAudio" in err or "querying device" in err or "Invalid device" in err:
+            return ("No audio input found. Install BlackHole, or choose the microphone in "
+                    "Settings > Sound.", "error")
+        return "Something went wrong. Press Play to try again.", "error"
+    if st.get("connecting"):
+        return "Connecting to your lights…", "wait"
+    if not st.get("audio_open", True):
+        return "Starting to listen…", "wait"
+    if err == SILENT_MSG or st.get("db", 0) <= -90:
+        return "Can't hear any music. Check the audio input in Settings > Sound.", "warn"
+    dropped = st.get("dropped") or []
+    if dropped:
+        names = dropped[0] if len(dropped) == 1 else ", ".join(dropped[:-1]) + " and " + dropped[-1]
+        playing = max(0, st["lights"] - len(dropped))
+        return f"{names} stopped answering · {_plural(playing, 'light')} playing", "warn"
+    missing = st.get("missing") or []
+    if missing:
+        names = missing[0] if len(missing) == 1 else ", ".join(missing[:-1]) + " and " + missing[-1]
+        return f"{names} didn't answer · {_plural(st['lights'], 'light')} playing", "warn"
+    if st.get("locked") and st.get("onsets"):
+        return f"Listening · {_plural(st['lights'], 'light')} · on the beat", "ok"
+    return f"Finding the beat · {_plural(st['lights'], 'light')}", "wait"
+
+
+def _light_set(devices):
+    return [(d["ip"], d["model"]) for d in devices if d["ip"]]
+
+
+def apply_config(body):
+    """Validate and save settings from the page. If the set of lights changed while
+    playing, restart the engine in the background so the change applies at once."""
+    with CONFIG_LOCK:
+        relist = _apply_config_locked(body)
+    if relist and ENGINE.want_running:
+        threading.Thread(target=ENGINE.restart, daemon=True).start()
+
+
+def _apply_config_locked(body):
+    new = dict(ENGINE.cfg)
+    for k in DEFAULTS:
+        if k in body and not (k == "password" and not body[k]):
+            new[k] = body[k]
+    new["devices"] = clean_devices(new["devices"])
+    # a page that loaded before a calibration sends calib=None; keep the measured value
+    # (only the calibration screen clears it, through /api/calib)
+    measured = {d["ip"]: d["calib"] for d in ENGINE.cfg["devices"] if d["ip"] and d.get("calib") is not None}
+    for d in new["devices"]:
+        if d["calib"] is None and d["ip"] in measured:
+            d["calib"] = measured[d["ip"]]
+    if new["multi"] not in ("sync", "chase"):
+        new["multi"] = "sync"
+    new["minB"] = int(new["minB"])
+    new["maxB"] = int(new["maxB"])
+    new["sensitivity"] = float(new["sensitivity"])
+    new["smooth"] = float(new["smooth"])
+    new["lock"] = bool(new["lock"])
+    new["lead"] = max(-150, min(250, int(new["lead"])))
+    relist = _light_set(new["devices"]) != _light_set(ENGINE.cfg["devices"])
+    ENGINE.cfg = new
+    save_config(new)
+    return relist
+
+
+UI_FILE = re.compile(r"^[a-z0-9_-]+\.(css|js|svg|png|html)$")
+UI_TYPES = {"css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8",
+            "svg": "image/svg+xml", "png": "image/png", "html": "text/html; charset=utf-8"}
+
+
+def serve_ui(name):
+    """Bytes of a file in ui/ (names are checked by the caller / are constants)."""
+    with open(os.path.join(UI_DIR, name), "rb") as f:
+        return f.read()
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, body, ctype="application/json"):
+        data = body.encode() if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _state(self):
+        c = dict(ENGINE.cfg)
+        c["has_password"] = bool(c.get("password"))
+        c.pop("password", None)
+        out = {"cfg": c, "running": ENGINE.running, "error": ENGINE.error,
+                "bpm": round(ENGINE.bpm, 1), "brightness": ENGINE.brightness,
+                "lights": ENGINE.lights, "lat": ENGINE.lat,
+                "level": round(ENGINE.level, 2), "onsets": ENGINE.onsets,
+                "db": round(20 * np.log10(max(ENGINE.rms, 1e-7)), 1),
+                "connecting": ENGINE.connecting, "audio_open": ENGINE.audio_open,
+                "dropped": ENGINE.dropped,
+                "locked": ENGINE.locked, "missing": ENGINE.missing,
+                "beats": ENGINE.beats, "color": live_color_hex(ENGINE.cfg, ENGINE.bpm or 110)}
+        out["status"], out["status_level"] = status_text(out)
+        return out
+
+    def _refuse_foreign(self):
+        """Only Temponome's own pages may talk to this server: reject other Host names
+        (DNS rebinding) and non-JSON posts (other websites can't send JSON without a
+        CORS preflight, which this server never approves)."""
+        port = self.server.server_address[1]
+        if self.headers.get("Host", "") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+            self._send(403, "{}")
+            return True
+        if self.command == "POST" and not self.headers.get("Content-Type", "").startswith("application/json"):
+            self._send(415, "{}")
+            return True
+        return False
+
+    def do_GET(self):
+        if self._refuse_foreign():
+            return
+        if self.path == "/":
+            self._send(200, serve_ui("main.html"), "text/html; charset=utf-8")
+        elif self.path.split("#")[0] == "/settings":
+            self._send(200, serve_ui("settings.html"), "text/html; charset=utf-8")
+        elif self.path.startswith("/ui/"):
+            name = self.path[4:].split("?")[0]
+            if not UI_FILE.match(name) or not os.path.exists(os.path.join(UI_DIR, name)):
+                self._send(404, "{}")
+                return
+            self._send(200, serve_ui(name), UI_TYPES[name.rsplit(".", 1)[1]])
+        elif self.path == "/api/state":
+            self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/devices":
+            self._send(200, json.dumps(list_inputs()))
+        elif self.path == "/api/scan":
+            self._send(200, json.dumps(scan_all(ENGINE.cfg)))
+        else:
+            self._send(404, "{}")
+
+    def do_POST(self):
+        if self._refuse_foreign():
+            return
+        n = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(n) or "{}")
+        if self.path == "/api/config":
+            apply_config(body)
+            self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/start":
+            ENGINE.start()
+            self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/flash":
+            ENGINE.flash = True
+            self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/stop":
+            ENGINE.stop()
+            self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/calib":
+            # webcam calibration, driven by the page: begin / flash / end / save
+            act = body.get("action")
+            if act == "begin":
+                if not ENGINE.running or not ENGINE.light_info:
+                    self._send(200, json.dumps({"ok": False, "error": "Press Start first so the app is connected to your lights."}))
+                    return
+                ENGINE.calib_until = time.time() + 120
+                self._send(200, json.dumps({"ok": True, "lights": ENGINE.light_info}))
+            elif act == "flash":
+                ENGINE.calib_until = max(ENGINE.calib_until, time.time() + 20)
+                r = ENGINE.calib_flash(int(body.get("pos", 0)), max(1, min(100, int(body.get("b", 100)))))
+                self._send(200, json.dumps(r))
+            elif act == "end":
+                ENGINE.calib_until = 0.0
+                self._send(200, json.dumps({"ok": True}))
+            elif act == "save":
+                new = dict(ENGINE.cfg)
+                devs = copy.deepcopy(new["devices"])
+                for r in body.get("results", []):
+                    i = int(r.get("idx", -1))
+                    if 0 <= i < len(devs):
+                        devs[i]["calib"] = None if r.get("calib") is None else int(round(r["calib"]))
+                new["devices"] = clean_devices(devs)
+                if body.get("reset_nudge"):
+                    new["lead"] = 0      # the old nudge was a guess at the bulb delay, now measured
+                ENGINE.cfg = new
+                save_config(new)
+                self._send(200, json.dumps(self._state()))
+            else:
+                self._send(400, "{}")
+        else:
+            self._send(404, "{}")
+
+
+
+
+
+def make_server(port):
+    """The local web server the windows talk to (only reachable from this Mac)."""
+    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+
+
+def main():
+    server = make_server(PORT)
+    url = f"http://127.0.0.1:{PORT}"
+    print(f"Temponome running at {url}  (Ctrl+C to quit)")
+    threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        ENGINE.stop()
+        print("\nBye.")
+
+
+if __name__ == "__main__":
+    main()

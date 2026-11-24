@@ -1,0 +1,17 @@
+Temponome makes your Tapo and Govee lights pulse and change color with your music.
+
+INSTALL
+1. Drag Temponome onto the Applications folder in this window.
+2. Open your Applications folder, right-click Temponome and choose Open, then Open again.
+   (macOS asks this once because the app isn't signed with an Apple developer account.)
+3. If macOS asks to use the microphone or to find devices on your local network, click Allow.
+
+SOUND FROM THIS MAC
+Install BlackHole 2ch (free) from https://existential.audio/blackhole/ and choose it in
+Temponome > Settings > Sound. Or choose the Mac's microphone to listen to a speaker in the room.
+
+UPDATING
+Drag the new Temponome onto Applications and choose Replace. Your lights, colors and
+timing are kept (they live in ~/Library/Application Support/Temponome/).
+
+Don't run the old "Start Tapo Music" launcher at the same time as the app.

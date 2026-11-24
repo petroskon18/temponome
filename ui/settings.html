@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Temponome Settings</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/ui/deck.css">
+<style>
+body { -webkit-user-select: text; user-select: text; }
+.tabs { position: sticky; top: 0; z-index: 5; display: flex; justify-content: center; gap: 4px; padding: 10px 12px 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.tabs button { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 72px; padding: 6px 10px; border: 0; background: transparent; color: var(--mut); }
+.tabs button svg { width: 22px; height: 22px; }
+.tabs button[aria-selected=true] { background: var(--line); color: var(--ink); }
+main { padding: 18px 24px 28px; max-width: 620px; margin: 0 auto; }
+section[hidden] { display: none; }
+h2 { font-size: 13px; font-weight: 600; margin: 18px 0 8px; }
+section > h2:first-child { margin-top: 0; }
+.group { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px 14px; }
+.row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.row:first-child { border-top: 0; }
+.row > .grow { flex: 1; min-width: 160px; }
+.hint { font-size: 12px; color: var(--mut); margin: 6px 2px 0; }
+.title { font-weight: 500; }
+input[type=text], input[type=email], input[type=password], input[type=number], select {
+  font: inherit; color: var(--ink); background: var(--body); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-height: 28px;
+}
+input[type=number] { width: 80px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+button.primary { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
+.msg { font-size: 12px; white-space: pre-line; margin-top: 8px; }
+.msg.err { color: var(--err); }
+.found { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.found:first-child { border-top: 0; }
+.found small { color: var(--mut); }
+.wheels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: center; }
+.wheels canvas { width: 100%; max-width: 200px; border-radius: 50%; cursor: crosshair; touch-action: none; }
+.sw { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--line); }
+.meter { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter div { height: 100%; width: 0; background: var(--ok); transition: width .1s; }
+.ends { display: flex; justify-content: space-between; }
+video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
+#calFlash { position: fixed; inset: 0; background: #000; display: none; z-index: 99; color: #777; padding: 20px; font-size: 16px; }
+@media (max-width: 520px) { .wheels { grid-template-columns: 1fr; } .tabs button { min-width: 0; } }
+</style></head>
+<body>
+<nav class="tabs" role="tablist" aria-label="Settings sections">
+ <button role="tab" id="tab-lights" aria-controls="lights" aria-selected="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>Lights</button>
+ <button role="tab" id="tab-colors" aria-controls="colors" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><circle cx="14.5" cy="8.5" r="1.6" fill="currentColor"/><circle cx="15.5" cy="13.5" r="1.6" fill="currentColor"/></svg>Colors</button>
+ <button role="tab" id="tab-sound" aria-controls="sound" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg>Sound</button>
+ <button role="tab" id="tab-timing" aria-controls="timing" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M8 20h8l-2.5-15h-3zM12 15l3.5-8"/></svg>Timing</button>
+</nav>
+
+<main>
+<!-- Lights -->
+<section id="lights" role="tabpanel" aria-labelledby="tab-lights">
+ <h2>Your lights</h2>
+ <div class="group" id="devList"></div>
+ <div class="actions">
+  <button class="primary" id="scan">Find my lights</button>
+  <button id="addToggle">Add by IP address…</button>
+  <button id="flash">Flash lights</button>
+ </div>
+ <div class="msg" id="scanMsg" role="status"></div>
+ <div class="group" id="finder" hidden style="margin-top:10px"></div>
+ <div id="addForm" hidden style="margin-top:10px" class="group">
+  <div class="row"><label for="addIp" class="grow">IP address</label><input type="text" id="addIp" placeholder="192.168.1.50" style="width:150px"></div>
+  <div class="row"><label for="addModel" class="grow">Type</label><select id="addModel"></select></div>
+  <div class="row"><span class="grow"></span><button id="addBtn">Add light</button></div>
+ </div>
+ <p class="hint">Govee lamps need LAN Control switched on: in the Govee Home app open the lamp and tap the settings gear.</p>
+
+ <h2>Tapo account</h2>
+ <div class="group">
+  <div class="row"><label for="email" class="grow">Email</label><input type="email" id="email" autocomplete="username" style="width:240px"></div>
+  <div class="row"><label for="password" class="grow">Password</label><input type="password" id="password" autocomplete="current-password" style="width:240px"></div>
+ </div>
+ <p class="hint">Only needed for Tapo lights. It's saved on this Mac only.</p>
+</section>
+
+<!-- Colors -->
+<section id="colors" role="tabpanel" aria-labelledby="tab-colors" hidden>
+ <h2>How colors change</h2>
+ <div class="group">
+  <div class="row"><label class="grow"><input type="radio" name="mode" value="tempo"> Blend by tempo: slow songs use color A, fast songs color B</label></div>
+  <div class="row"><label class="grow"><input type="radio" name="mode" value="fixed"> One color: always color A</label></div>
+ </div>
+ <h2>Colors</h2>
+ <div class="wheels">
+  <div><canvas id="wA" width="220" height="220" aria-label="Color A wheel"></canvas><div><span class="sw" id="swA"></span>Color A · calm</div></div>
+  <div id="boxB"><canvas id="wB" width="220" height="220" aria-label="Color B wheel"></canvas><div><span class="sw" id="swB"></span>Color B · energetic</div></div>
+ </div>
+</section>
+
+<!-- Sound -->
+<section id="sound" role="tabpanel" aria-labelledby="tab-sound" hidden>
+ <h2>Listen to</h2>
+ <div class="group">
+  <div class="row"><label for="device" class="grow">Audio input</label><select id="device" style="max-width:280px"></select></div>
+  <div class="row"><span class="grow">Level</span><div class="meter" style="width:200px" aria-hidden="true"><div id="meter"></div></div></div>
+ </div>
+ <p class="hint">BlackHole 2ch plays your Mac's own sound to Temponome (recommended). Choose the microphone to listen to a speaker in the room.</p>
+ <h2>Beat</h2>
+ <div class="group">
+  <div class="row"><span class="grow" id="lockLbl">Follow a steady beat<br><span class="hint" style="margin:0">Steadier flashes, especially with a microphone</span></span>
+   <span class="switch"><button class="track" id="lock" role="switch" aria-labelledby="lockLbl" aria-checked="true"><span class="knob"></span></button></span></div>
+  <div class="row" style="display:block"><label for="sens">Which beats</label>
+   <input type="range" id="sens" min="1.1" max="2.5" step="0.05">
+   <div class="ends marking"><span>More, lighter beats</span><span>Fewer, strong beats</span></div></div>
+  <div class="row" style="display:block"><label for="minB" style="display:flex;justify-content:space-between"><span>Dimmest level between beats</span><span class="marking" id="minBv"></span></label>
+   <input type="range" id="minB" min="1" max="60" step="1"></div>
+ </div>
+</section>
+
+<!-- Timing -->
+<section id="timing" role="tabpanel" aria-labelledby="tab-timing" hidden>
+ <h2>Measure your lights' delay</h2>
+ <div class="group">
+  <div class="row" style="display:block">
+   <p style="margin:4px 0 8px">Uses the Mac's camera to see how long each light takes to light up, so flashes land on the beat. Dim the room, turn screen brightness up and point the camera at the light (or a wall it lights). About 10 seconds plus 20 per light. The video stays on this Mac.</p>
+   <div class="actions" style="margin-top:0"><button class="primary" id="calOpen">Calibrate timing</button><button id="calClear" hidden>Forget calibration</button></div>
+   <div class="hint" id="calSum"></div>
+   <div id="calBox" hidden style="margin-top:10px">
+    <video id="calVid" autoplay playsinline muted></video>
+    <p class="hint">Aim so the light is in the picture, keep the Mac still, then press Begin. The screen will flash black and white for a few seconds.</p>
+    <div class="actions"><button class="primary" id="calRun">Begin measuring</button><button id="calCancel">Cancel</button></div>
+   </div>
+   <div class="msg" id="calMsg" role="status"></div>
+  </div>
+ </div>
+ <h2>Fine-tune</h2>
+ <div class="group">
+  <div class="row" style="display:block"><label for="lead" style="display:flex;justify-content:space-between"><span>Fire earlier or later</span><span class="marking" id="leadV"></span></label>
+   <input type="range" id="lead" min="-250" max="150" step="10">
+   <div class="ends marking"><span>Earlier</span><span>Later</span></div>
+   <p class="hint">Move left if the lights feel late, right if they feel early.</p></div>
+ </div>
+ <div id="offBox" hidden>
+  <h2>One light out of step</h2>
+  <div class="group" id="offList"></div>
+  <p class="hint">Only needed if one light is off compared to the others. Positive numbers make that light flash earlier.</p>
+ </div>
+</section>
+</main>
+<div id="calFlash">Measuring the camera's own delay… keep still.</div>
+
+<script src="/ui/common.js"></script>
+<script src="/ui/settings.js"></script>
+</body></html>

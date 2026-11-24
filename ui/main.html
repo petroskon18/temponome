@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Temponome</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/ui/deck.css">
+<style>
+/* the deck always fits its window: the record shrinks with the window, nothing scrolls */
+body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.deck { flex: 1; min-height: 0; display: grid; grid-template-columns: auto minmax(0, 340px); gap: 24px; align-items: center; justify-content: center; padding: 14px 22px 8px; }
+.stage { position: relative; --s: min(400px, calc(100vh - 96px), 44vw); width: var(--s); height: var(--s); }
+.stage svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+#label { transition: transform .12s ease-out; transform-origin: 130px 130px; }
+#label.beat { transform: scale(1.06); }
+#arm { transform-origin: 268px 22px; transform: rotate(0deg); transition: transform .4s ease-in-out; }
+.playing #arm { transform: rotate(20deg); }
+.controls { display: flex; flex-direction: column; gap: clamp(6px, 2.2vh, 14px); min-width: 0; }
+.controls .seg { align-self: flex-start; }
+.playrow { display: flex; align-items: center; gap: 14px; }
+#play { width: 64px; height: 64px; border-radius: 50%; border: 0; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; padding: 0; }
+#play svg { width: 26px; height: 26px; }
+.ctl label { display: flex; justify-content: space-between; margin-bottom: 2px; }
+.ends { display: flex; justify-content: space-between; margin-top: -2px; }
+.bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 22px 10px; border-top: 1px solid var(--line); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mut); flex: none; }
+.dot.ok { background: var(--ok); } .dot.wait { background: var(--wait); } .dot.warn { background: var(--warn); } .dot.error { background: var(--err); }
+#status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#empty { display: none; text-align: left; }
+#empty p { margin: 0 0 10px; font-size: 15px; }
+.noLights #empty { display: block; }
+.noLights .needsLights { display: none; }
+@media (max-width: 430px) { body { height: auto; overflow: auto; } .deck { grid-template-columns: 1fr; justify-items: center; align-content: start; } .stage { --s: min(220px, 80vw); } .controls { width: 100%; } }
+</style></head>
+<body>
+<main class="deck" id="deck">
+ <div class="stage" role="img" id="stage" aria-label="Tempo not running">
+  <svg viewBox="0 0 280 280" aria-hidden="true">
+   <circle cx="130" cy="130" r="122" fill="var(--platter)" stroke="var(--rim)" stroke-width="2"/>
+   <circle cx="130" cy="130" r="108" fill="none" stroke="var(--rib)" stroke-width="1"/>
+   <circle cx="130" cy="130" r="96" fill="none" stroke="var(--rib)" stroke-width="1"/>
+   <circle cx="130" cy="130" r="84" fill="none" stroke="var(--rib)" stroke-width="1"/>
+   <circle cx="130" cy="130" r="72" fill="none" stroke="var(--rib)" stroke-width="1"/>
+   <circle cx="130" cy="130" r="60" fill="none" stroke="var(--rib)" stroke-width="1"/>
+   <g id="label">
+    <circle id="labelDisc" cx="130" cy="130" r="40" fill="var(--rib)"/>
+    <text id="bpmNum" x="130" y="132" text-anchor="middle" font-size="22" font-weight="600" fill="#1b1b1c">—</text>
+    <text x="130" y="150" text-anchor="middle" font-size="10" fill="#1b1b1c" opacity=".7">BPM</text>
+   </g>
+   <g id="arm">
+    <line x1="268" y1="22" x2="268" y2="178" stroke="var(--arm)" stroke-width="4" stroke-linecap="round"/>
+    <line x1="268" y1="178" x2="258" y2="200" stroke="var(--arm)" stroke-width="4" stroke-linecap="round"/>
+    <rect x="249" y="196" width="16" height="11" rx="2" transform="rotate(25 257 201)" fill="var(--arm)"/>
+    <circle cx="268" cy="22" r="11" fill="var(--panel)" stroke="var(--rim)" stroke-width="1.5"/>
+   </g>
+  </svg>
+ </div>
+
+ <div class="controls">
+  <div id="empty">
+   <p>Find your lights to get started</p>
+   <button id="findLights">Find my lights</button>
+  </div>
+  <div class="playrow needsLights">
+   <button id="play" aria-label="Play"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
+   <div><div id="playLabel" style="font-size:15px;font-weight:500">Play</div><div class="marking" id="lightsCount"></div></div>
+  </div>
+  <div class="ctl needsLights">
+   <label for="maxB"><span>Brightness</span><span class="marking" id="maxBv"></span></label>
+   <input type="range" id="maxB" min="10" max="100" step="5">
+  </div>
+  <div class="ctl needsLights">
+   <label for="smooth"><span>Pulse</span></label>
+   <input type="range" id="smooth" min="0" max="1" step="0.05" aria-describedby="pulseEnds">
+   <div class="ends marking" id="pulseEnds"><span>Snappy</span><span>Smooth</span></div>
+  </div>
+  <div class="seg needsLights" id="multiBox" role="radiogroup" aria-label="How the lights pulse" hidden>
+   <button role="radio" id="mSync" aria-checked="true" title="All lights pulse on every beat">Together</button>
+   <button role="radio" id="mChase" aria-checked="false" title="Lights take turns, one per beat">Chase</button>
+  </div>
+ </div>
+</main>
+
+<footer class="bar">
+ <span class="dot" id="dot"></span>
+ <span id="status" role="status" aria-live="polite">Ready · press Play</span>
+ <button id="settings" aria-label="Settings" title="Settings (⌘,)">
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" style="vertical-align:-3px"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>
+  Settings</button>
+</footer>
+
+<script src="/ui/common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let st = null, lastBeats = null, loaded = false, multiTouched = 0, saveFailedAt = 0;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+
+function darkInk(hex) {          // dark text on light label colours, white on dark ones
+  const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#1b1b1c' : '#ffffff';
+}
+
+function render() {
+  const running = st.running, hasLights = st.cfg.devices.some(d => d.ip);
+  document.body.classList.toggle('noLights', !hasLights);
+  $('deck').classList.toggle('playing', running);
+  $('play').setAttribute('aria-label', running ? 'Stop' : 'Play');
+  $('playLabel').textContent = running ? 'Stop' : 'Play';
+  $('playIcon').setAttribute('d', running ? 'M6.5 6.5h11v11h-11z' : 'M8 5v14l11-7z');
+  const n = running ? st.lights : st.cfg.devices.filter(d => d.ip).length;
+  $('lightsCount').textContent = n === 1 ? '1 light' : n + ' lights';
+  const col = running ? st.color : getComputedStyle(document.documentElement).getPropertyValue('--rib').trim();
+  $('labelDisc').setAttribute('fill', col);
+  const ink = running ? darkInk(st.color) : getComputedStyle(document.documentElement).getPropertyValue('--mut').trim();
+  $('bpmNum').setAttribute('fill', ink); $('bpmNum').nextElementSibling.setAttribute('fill', ink);
+  $('bpmNum').textContent = running && st.bpm ? Math.round(st.bpm) : '—';
+  const saveFailed = Date.now() - saveFailedAt < 4000;
+  $('status').textContent = saveFailed ? "Couldn't save your last change. Try again." : st.status;
+  $('status').title = st.error || '';
+  $('dot').className = 'dot ' + (saveFailed ? 'warn' : st.status_level);
+  $('multiBox').hidden = n < 2;
+  if (Date.now() - multiTouched > 800)    // don't flip it back before the click is saved
+    showMulti(st.cfg.multi === 'chase');
+  if (!loaded) {                 // fill the sliders once; after that the user owns them
+    $('maxB').value = st.cfg.maxB; $('smooth').value = st.cfg.smooth; loaded = true;
+  }
+  $('maxBv').textContent = $('maxB').value + '%';
+  $('maxB').setAttribute('aria-valuetext', $('maxB').value + ' percent');
+  const sm = +$('smooth').value;
+  $('smooth').setAttribute('aria-valuetext', sm < 0.34 ? 'Snappy' : sm > 0.66 ? 'Smooth' : 'Medium');
+  $('stage').setAttribute('aria-label', running && st.bpm ? `Tempo ${Math.round(st.bpm)} BPM` : 'Tempo not running');
+  if (lastBeats !== null && st.beats !== lastBeats && running && !reduce.matches) {
+    const l = $('label'); l.classList.add('beat'); setTimeout(() => l.classList.remove('beat'), 120);
+  }
+  lastBeats = st.beats;
+}
+
+async function poll() {
+  try { st = await T.api('/api/state'); render(); } catch (e) { /* server restarting */ }
+}
+
+async function togglePlay() {
+  await T.api(st && st.running ? '/api/stop' : '/api/start', {});
+  poll();
+}
+
+$('play').onclick = togglePlay;
+$('maxB').oninput = () => { $('maxBv').textContent = $('maxB').value + '%'; T.saveCfg({ maxB: +$('maxB').value }); };
+$('smooth').oninput = () => T.saveCfg({ smooth: +$('smooth').value });
+function showMulti(chase) {
+  $('mSync').setAttribute('aria-checked', !chase); $('mChase').setAttribute('aria-checked', chase);
+  $('mSync').tabIndex = chase ? -1 : 0; $('mChase').tabIndex = chase ? 0 : -1;
+}
+function setMulti(chase) {
+  multiTouched = Date.now(); showMulti(chase);
+  T.saveCfg({ multi: chase ? 'chase' : 'sync' });
+}
+$('mSync').onclick = () => setMulti(false);
+$('mChase').onclick = () => setMulti(true);
+$('multiBox').onkeydown = e => {          // arrow keys move between the two, like a radio group
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+    e.preventDefault(); const chase = $('mSync').getAttribute('aria-checked') === 'true';
+    setMulti(chase); $(chase ? 'mChase' : 'mSync').focus();
+  }
+};
+$('settings').onclick = () => T.openSettings();
+$('findLights').onclick = () => T.openSettings('lights');
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) {
+    e.preventDefault(); togglePlay();
+  }
+  if (e.key === ',' && e.metaKey) { e.preventDefault(); T.openSettings(); }
+});
+window.addEventListener('temponome-save-failed', () => { saveFailedAt = Date.now(); });
+setInterval(poll, 100);
+poll();
+</script>
+</body></html>

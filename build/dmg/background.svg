@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 600 600">
+  <!-- Temponome disk image background (600x400 window at 2x; square canvas because qlmanage renders squares, the build keeps the middle 1200x800) -->
+  <rect width="600" height="600" fill="#f2f2f0"/>
+  <g transform="translate(0,100)"><!-- centred: the build keeps the middle 1200x800 -->
+  <text x="300" y="58" text-anchor="middle" font-family="-apple-system, Helvetica Neue, sans-serif" font-size="22" font-weight="600" fill="#1d1d1f">Install Temponome</text>
+  <text x="300" y="84" text-anchor="middle" font-family="-apple-system, Helvetica Neue, sans-serif" font-size="14" fill="#6e6e73">Drag the lamp onto the Applications folder</text>
+  <path d="M 228 200 L 360 200" stroke="#e2531b" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 344 186 L 364 200 L 344 214" fill="none" stroke="#e2531b" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="300" y="338" text-anchor="middle" font-family="-apple-system, Helvetica Neue, sans-serif" font-size="12.5" fill="#6e6e73">First time: open Applications, right-click Temponome and choose Open.</text>
+  <text x="300" y="358" text-anchor="middle" font-family="-apple-system, Helvetica Neue, sans-serif" font-size="12.5" fill="#6e6e73">For your Mac's own sound, also install BlackHole 2ch (see Read Me).</text>
+  </g>
+</svg>

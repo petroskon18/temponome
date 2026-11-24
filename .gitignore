@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.superpowers/
+build/.venv/
+build/work/
+dist/
+
+# never publish personal settings (they hold the Tapo login) or logs
+settings*.json
+.tapo_music_ui.json
+*.log

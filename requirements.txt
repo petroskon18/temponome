@@ -1,0 +1,5 @@
+tapo
+sounddevice
+numpy
+# tests only
+scipy

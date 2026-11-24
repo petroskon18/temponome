@@ -1,0 +1,57 @@
+/* Temponome look: a small turntable deck (matte body, ribbed platter, silver arm).
+   Dark appearance = black deck, light appearance = white/silver deck. */
+:root {
+  --body: #f2f2f0; --panel: #e8e8e5; --platter: #dcdcd8; --rib: #cdcdc8; --rim: #9a9a96;
+  --arm: #5a5a5e; --ink: #1d1d1f; --mut: #5e5e63; --line: #d0d0cc; --track: #8a8a86;
+  --accent: #e2531b; --on-accent: #ffffff;
+  --accent-fill: #c2410c;   /* darker orange behind text, so white text stays readable (4.5:1+) */ --ok: #2e9d57; --wait: #b07a12; --warn: #c25e00; --err: #d63b3b;
+  --focus: #0a64d8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --body: #1b1b1c; --panel: #232325; --platter: #2a2a2c; --rib: #343437; --rim: #c7c7cc;
+    --arm: #c7c7cc; --ink: #f2f2f5; --mut: #a1a1a8; --line: #3a3a3d; --track: #76767b;
+    --ok: #4cc47a; --wait: #e0b14a; --warn: #ff9f45; --err: #ff6b6b; --focus: #4c9bff;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* hidden always wins over a display rule */
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--body); color: var(--ink);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none;
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.mut { color: var(--mut); }
+.marking { font-size: 11px; letter-spacing: .02em; color: var(--mut); }
+
+button {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 12px; min-height: 28px; cursor: pointer;
+}
+button:hover { filter: brightness(1.06); }
+button:active { transform: scale(.98); }
+
+/* sliders: thin track, silver round knob */
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; background: transparent; margin: 0; }
+input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--track); }
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; margin-top: -7.5px;
+  background: var(--rim); border: 1px solid var(--arm);
+}
+
+/* two-position slide switch, like a turntable speed switch */
+.switch { display: inline-flex; align-items: center; gap: 8px; }
+.switch .track { position: relative; width: 48px; height: 28px; border-radius: 14px; background: var(--track); border: 0; padding: 0; min-height: 0; }
+.switch .knob { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch .track[aria-checked=true] .knob { left: 23px; }
+.switch .track[aria-checked=true] { background: var(--accent); }
+
+/* two-part choice (like Apple's segmented control): the chosen half is highlighted */
+.seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--line); gap: 2px; }
+.seg button { border: 0; background: transparent; color: var(--ink); min-height: 26px; padding: 3px 14px; border-radius: 6px; }
+.seg button[aria-checked=true] { background: var(--accent-fill); color: var(--on-accent); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

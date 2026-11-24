@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- simplified for 16 and 32 px: bigger shade, thicker pendulum, no light pool -->
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="#1d1d1f"/>
+  <rect x="482" y="700" width="60" height="120" fill="#aeaeb2"/>
+  <polygon points="250,730 774,730 610,190 414,190" fill="#f4e7c8"/>
+  <line x1="512" y1="680" x2="590" y2="260" stroke="#6b4f2a" stroke-width="40" stroke-linecap="round"/>
+</svg>

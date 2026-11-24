@@ -1,0 +1,19 @@
+# dmgbuild settings for Temponome.dmg; the app path is passed with -D app=...
+import os.path
+app = defines["app"]  # noqa: F821  (provided by dmgbuild)
+format = "UDZO"
+filesystem = "HFS+"
+files = [app, os.path.join(defines["here"], "Read Me.txt")]  # noqa: F821
+symlinks = {"Applications": "/Applications"}
+icon_locations = {"Temponome.app": (150, 200), "Applications": (450, 200), "Read Me.txt": (540, 300)}
+background = os.path.join(defines["here"], "background.png")  # noqa: F821
+window_rect = ((200, 200), (600, 400))
+default_view = "icon-view"
+show_status_bar = False
+show_tab_view = False
+show_toolbar = False
+show_pathbar = False
+show_sidebar = False
+icon_size = 112
+text_size = 13
+include_icon_view_settings = True
