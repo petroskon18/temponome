@@ -6,7 +6,7 @@ a = Analysis(
     [os.path.join(ROOT, "app", "temponome_app.py")],
     pathex=[ROOT],
     datas=[(os.path.join(ROOT, "ui"), "ui")],
-    hiddenimports=["temponome", "tapo"],
+    hiddenimports=["temponome", "audio_route", "passthrough", "tapo"],
     excludes=["scipy", "tkinter", "matplotlib", "pytest"],
 )
 pyz = PYZ(a.pure)
