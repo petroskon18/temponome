@@ -17,6 +17,9 @@ function showTab(name) {
     $('tab-' + t).setAttribute('aria-selected', t === name);
     $('tab-' + t).tabIndex = t === name ? 0 : -1;
   }
+  // the #tab in the address also matches the section's id, which makes the page jump past
+  // the section's first lines: always show a tab from its top
+  requestAnimationFrame(() => window.scrollTo(0, 0));
 }
 TABS.forEach((t, i) => {
   $('tab-' + t).onclick = () => { history.replaceState(null, '', '#' + t); showTab(t); };

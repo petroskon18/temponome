@@ -2,6 +2,13 @@
 
 Makes your Tapo and Govee lights pulse and change color with your music, on a Mac.
 
+<p align="center">
+  <img src="docs/screenshots/main-dark.png" width="49%" alt="Temponome playing in dark mode: a record shows 110 BPM, with Stop, Brightness, Pulse and Together or Chase controls">
+  <img src="docs/screenshots/main-light.png" width="49%" alt="The same window in light mode">
+</p>
+
+The main window looks like a small turntable. Press Play and the record shows the song's tempo, glowing in your lights' color on every beat.
+
 ## Install
 1. Download **Temponome.dmg** from the [latest release](https://github.com/petroskon18/temponome/releases/latest) (Apple silicon Macs), open it and drag **Temponome** onto the **Applications** folder (choose Replace if asked).
 2. The first time: open Applications, **right-click Temponome → Open**, then Open again. (macOS asks this because the app isn't signed with an Apple developer account.)
@@ -11,6 +18,13 @@ Makes your Tapo and Govee lights pulse and change color with your music, on a Ma
 - Press **Play**. The record shows the tempo and glows in your lights' color on each beat.
 - **Brightness** and **Pulse** are on the main window. Everything else is in **Settings** (⌘, or the gear): find your lights, colors, sound input, and timing calibration with the camera.
 - Your lights, colors and timing from the old version carry over automatically. Settings live in `~/Library/Application Support/Temponome/`.
+
+## Settings
+
+| Lights | Colors | Timing |
+|---|---|---|
+| <img src="docs/screenshots/settings-lights.png" alt="Lights tab: three found lights with their color choice, Find my lights, and the Tapo account"> | <img src="docs/screenshots/settings-colors.png" alt="Colors tab: two color wheels, a calm color for slow songs and an energetic one for fast songs"> | <img src="docs/screenshots/settings-timing.png" alt="Timing tab: camera calibration and a fine-tune slider from Earlier to Later"> |
+| Find your lights on Wi-Fi and pick which to use. | Choose a calm and an energetic color; the lights blend between them by tempo. | Measure each light's delay with the Mac's camera, so flashes land on the beat. |
 
 ## Older way to run it
 Double-click `Start Tapo Music.command` (needs Python). Don't run it at the same time as the app.
