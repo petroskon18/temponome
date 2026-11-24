@@ -6,6 +6,11 @@ build plan and its ledger of decisions: `docs/superpowers/plans/2026-11-24-tempo
 The owner is not a programmer: explain things in plain words, give exact steps for
 anything they must do on their Mac, and keep the double-click launcher working.
 
+## Publishing
+- Public repo https://github.com/petroskon18/temponome (GPL-3.0), commits use the GitHub
+  noreply email. Releases attach `dist/Temponome.dmg` (`gh release create vX.Y.Z dist/Temponome.dmg`).
+  Before pushing, check that no IP addresses, light names, emails or settings files are included.
+
 ## Owner's setup
 - **Final goal: a macOS `.pkg` installer whose only outside requirement is BlackHole**
   (system-audio loopback). Everything else (Python or another runtime, packages) must be
