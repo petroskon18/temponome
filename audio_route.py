@@ -118,6 +118,23 @@ class CoreAudioBackend:
             except OSError:
                 continue
 
+    def volume_db(self, dev_id):
+        for el in (0, 1):
+            v = self._get(dev_id, "vcdb", self.OUTPUT, ctype=ctypes.c_float, elem=el)
+            if v is not None:
+                return float(v)
+        return None
+
+    def set_volume_db(self, dev_id, db):
+        v = ctypes.c_float(float(db))
+        for el in (0, 1, 2):
+            try:
+                self._set(dev_id, "vcdb", v, self.OUTPUT, el)
+                if el == 0:
+                    return
+            except OSError:
+                continue
+
 
 BACKEND = CoreAudioBackend()
 
@@ -186,3 +203,29 @@ def recover(cfg, save):
         return True
     save("")
     return False
+
+
+def take_over_volume(speaker_uid):
+    """BlackHole scales the sound by its own volume (measured: half volume = about 1/40), so
+    while music plays through Temponome the volume keys (which now change BlackHole) set the
+    loudness: BlackHole gets the speaker's level in decibels and the speaker goes to full.
+    Returns what give_back_volume needs."""
+    bh, spk = blackhole(), _by_uid(speaker_uid)
+    if bh is None or spk is None:
+        return None
+    db = BACKEND.volume_db(spk["id"])
+    if db is None:
+        return None                       # the speaker has no volume control of its own
+    BACKEND.set_volume_db(bh["id"], db)
+    BACKEND.set_volume(spk["id"], 1.0)
+    return {"bh": bh["id"], "spk": spk["id"]}
+
+
+def give_back_volume(state):
+    """The speaker keeps the last loudness the owner chose; BlackHole goes back to full."""
+    if not state:
+        return
+    db = BACKEND.volume_db(state["bh"])
+    if db is not None:
+        BACKEND.set_volume_db(state["spk"], db)
+    BACKEND.set_volume(state["bh"], 1.0)

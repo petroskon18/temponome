@@ -13,6 +13,8 @@ import threading
 import unittest
 import urllib.request
 
+import numpy as np
+
 TMP_HOME = tempfile.mkdtemp()
 os.environ["HOME"] = TMP_HOME
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -366,6 +368,8 @@ class FakeBackend:
                                  "transport": "virt", "latency_ms": 0.0})
         self.cur = 2
         self.vols = {d["id"]: 1.0 for d in self.devs}
+        self.dbs = {d["id"]: 0.0 for d in self.devs}
+        self.dbs[2] = -12.0                     # MacBook speakers turned down a bit
 
     def devices(self):
         return [dict(d) for d in self.devs]
@@ -381,6 +385,12 @@ class FakeBackend:
 
     def set_volume(self, dev_id, v):
         self.vols[dev_id] = v
+
+    def volume_db(self, dev_id):
+        return self.dbs.get(dev_id)
+
+    def set_volume_db(self, dev_id, db):
+        self.dbs[dev_id] = db
 
 
 class AudioRoute(unittest.TestCase):
@@ -444,9 +454,119 @@ class AudioRoute(unittest.TestCase):
     def test_previous_blackhole_means_builtin(self):
         self.assertEqual(self.AR.pick_speaker("", "BlackHole2ch_UID")["uid"], "MBA")
 
+    def test_volume_moves_to_blackhole_and_back(self):
+        state = self.AR.take_over_volume("MBA")
+        self.assertEqual(self.fake.dbs[1], -12.0)      # BlackHole now sets the loudness
+        self.assertEqual(self.fake.vols[2], 1.0)       # speaker at full
+        self.fake.dbs[1] = -20.0                       # owner pressed volume down
+        self.AR.give_back_volume(state)
+        self.assertEqual(self.fake.dbs[2], -20.0)      # speaker keeps the last level
+        self.assertEqual(self.fake.vols[1], 1.0)       # BlackHole back to full
+
     def test_chosen_missing_falls_back_to_previous(self):
         self.assertEqual(self.AR.pick_speaker("GONE", "JBL")["uid"], "JBL")
         self.assertEqual(self.AR.pick_speaker("JBL", "MBA")["uid"], "JBL")
+
+
+class FakeOut:
+    """sounddevice.OutputStream stand-in."""
+    made = []
+
+    def __init__(self, device, channels, samplerate, blocksize, callback, finished_callback):
+        self.device, self.cb, self.fin = device, callback, finished_callback
+        self.active = True
+        FakeOut.made.append(self)
+
+    def start(self):
+        pass
+
+    def close(self):
+        self.active = False
+
+
+class FakeSd:
+    OutputStream = FakeOut
+
+    @staticmethod
+    def query_devices():
+        return [{"name": "BlackHole 2ch", "max_output_channels": 2},
+                {"name": "MacBook Air Speakers", "max_output_channels": 2},
+                {"name": "JBL Flip", "max_output_channels": 2}]
+
+
+class DelayedSound(unittest.TestCase):
+    def setUp(self):
+        import passthrough as P
+        self.P = P
+
+    def pull_all(self, line, n, block=512):
+        out = [line.pull(block) for _ in range(n // block)]
+        return np.concatenate(out)
+
+    def test_delay_is_exact(self):
+        line = self.P.DelayLine(44100, 0.3)
+        x = np.zeros((44100, 2), np.float32)
+        x[0] = 1.0
+        out = []
+        for k in range(0, 44032, 512):                   # sound in and out at the same pace
+            line.push(x[k:k + 512])
+            out.append(line.pull(512))
+        y = np.concatenate(out)
+        self.assertEqual(int(np.argmax(y[:, 0])), round(0.3 * 44100))
+
+    def test_stereo_kept(self):
+        line = self.P.DelayLine(44100, 0.1)
+        x = np.zeros((8192, 2), np.float32)
+        x[:, 0], x[:, 1] = 0.5, -0.25
+        line.push(x)
+        y = line.pull(8192)
+        self.assertAlmostEqual(float(y[-1, 0]), 0.5)
+        self.assertAlmostEqual(float(y[-1, 1]), -0.25)
+
+    def test_underflow_is_silence(self):
+        line = self.P.DelayLine(44100, 0.1)
+        y = line.pull(512)
+        self.assertEqual(y.shape, (512, 2))
+        self.assertEqual(float(np.abs(y).max()), 0.0)
+
+    def test_drift_is_corrected(self):
+        rate, line = 44100, self.P.DelayLine(44100, 0.3)
+        written, pushed = 0.0, 0
+        worst = 0.0
+        for k in range(int(60 * rate / 512)):           # 60 s, input clock 0.05 % fast (13 ms drift)
+            written += 512 * 1.0005
+            n = int(written) - pushed
+            pushed += n
+            line.push(np.zeros((n, 2), np.float32))
+            line.pull(512)
+            if k > 100:
+                worst = max(worst, abs(line.buffered() / rate - 0.3))
+        self.assertLess(worst, 0.006)
+
+    def test_lost_speaker_falls_back(self):
+        FakeOut.made = []
+        line = self.P.DelayLine(44100, 0.3)
+        pl = self.P.Player(FakeSd, "JBL Flip", "MacBook Air Speakers", line, 44100)
+        pl.start()
+        self.assertEqual(FakeOut.made[0].device, 2)
+        FakeOut.made[0].active = False                  # Bluetooth switched off
+        FakeOut.made[0].fin()
+        pl.check()
+        self.assertEqual(FakeOut.made[1].device, 1)
+        self.assertEqual(pl.fell_back, "MacBook Air Speakers")
+        pl.close()
+        pl.check()
+        self.assertEqual(len(FakeOut.made), 2)          # a deliberate close is not a loss
+
+    def test_player_plays_the_delay_line(self):
+        FakeOut.made = []
+        line = self.P.DelayLine(44100, 0.0)
+        line.push(np.full((512, 2), 0.25, np.float32))
+        pl = self.P.Player(FakeSd, "MacBook Air Speakers", None, line, 44100)
+        pl.start()
+        out = np.zeros((512, 2), np.float32)
+        FakeOut.made[0].cb(out, 512, None, None)
+        self.assertAlmostEqual(float(out[-1, 1]), 0.25)
 
 
 class ColorBlend(unittest.TestCase):
