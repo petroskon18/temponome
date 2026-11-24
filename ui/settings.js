@@ -148,38 +148,132 @@ function hex2hs(hex) {
   if (d) { h = mx == r ? ((g - b) / d) % 6 : mx == g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; if (h < 0) h += 360; }
   return [h, mx ? d / mx : 0];
 }
-function makeWheel(cid, swid, key) {
-  const c = $(cid), ctx = c.getContext('2d'), R = c.width / 2;
-  const img = ctx.createImageData(c.width, c.height);
-  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
-    const dx = x - R, dy = y - R, r = Math.hypot(dx, dy), i = (y * c.width + x) * 4;
-    if (r <= R) {
-      let h = Math.atan2(dy, dx) * 180 / Math.PI; if (h < 0) h += 360;
-      const hex = hsv2hex(h, r / R, 1);
-      img.data[i] = parseInt(hex.slice(1, 3), 16); img.data[i + 1] = parseInt(hex.slice(3, 5), 16); img.data[i + 2] = parseInt(hex.slice(5, 7), 16); img.data[i + 3] = 255;
-    }
-  }
-  function draw() {
-    ctx.putImageData(img, 0, 0);
-    const [h, s] = hex2hs(cfg[key]), a = h * Math.PI / 180, px = R + Math.cos(a) * s * R, py = R + Math.sin(a) * s * R;
-    ctx.beginPath(); ctx.arc(px, py, 8, 0, 7); ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
-    ctx.beginPath(); ctx.arc(px, py, 9.5, 0, 7); ctx.lineWidth = 1; ctx.strokeStyle = '#000'; ctx.stroke();
-    $(swid).style.background = cfg[key];
-  }
-  function pick(e) {
-    const rc = c.getBoundingClientRect();
-    const x = (e.clientX - rc.left) * c.width / rc.width - R, y = (e.clientY - rc.top) * c.height / rc.height - R;
-    let h = Math.atan2(y, x) * 180 / Math.PI; if (h < 0) h += 360;
-    cfg[key] = hsv2hex(h, Math.min(1, Math.hypot(x, y) / R), 1); draw(); T.saveCfg({ [key]: cfg[key] });
-  }
-  let down = false;
-  c.addEventListener('pointerdown', e => { down = true; c.setPointerCapture(e.pointerId); pick(e); });
-  c.addEventListener('pointermove', e => { if (down) pick(e); });
-  c.addEventListener('pointerup', () => down = false);
-  draw();
+// The wheel: 24 hues x 6 rings, vivid at the edge and softer toward the middle; the
+// center is white. Every piece is a color both Tapo (hue + saturation) and Govee (RGB)
+// lamps can show; brightness is set by the beat, not by the color.
+const HUES = 24, RINGS = 6, R_OUT = 124, R_IN = 22, CX = 130, CY = 130;
+function hsl2hex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return '#' + [f(0), f(8), f(4)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
 }
+const pieceHex = (i, r) => hsl2hex(i * 360 / HUES, 90 - r * 5, 50 + r * 36 / (RINGS - 1));
+// where a saved color sits on the wheel: the nearest piece, or the white center
+function locate(hex) {
+  const [h, s] = hex2hs(hex);
+  if (s < 0.1) return null;
+  const sats = [...Array(RINGS)].map((_, r) => hex2hs(pieceHex(0, r))[1]);
+  let ring = 0; sats.forEach((v, r) => { if (Math.abs(v - s) < Math.abs(sats[ring] - s)) ring = r; });
+  return { i: Math.round(h / (360 / HUES)) % HUES, r: ring };
+}
+function sector(r0, r1, a0, a1) {
+  const p = (r, a) => [CX + r * Math.sin(a), CY - r * Math.cos(a)].map(v => v.toFixed(2));
+  const [x1, y1] = p(r1, a0), [x2, y2] = p(r1, a1), [x3, y3] = p(r0, a1), [x4, y4] = p(r0, a0);
+  return `M${x1} ${y1}A${r1} ${r1} 0 0 1 ${x2} ${y2}L${x3} ${y3}A${r0} ${r0} 0 0 0 ${x4} ${y4}Z`;
+}
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+let pickKey = 'colorA', liveBpm = 0;
+
+function buildWheel() {
+  const w = $('wheel'), band = (R_OUT - R_IN) / RINGS;
+  w.innerHTML = '';
+  for (let i = 0; i < HUES; i++) for (let r = 0; r < RINGS; r++) {
+    const hex = pieceHex(i, r), a0 = i * 2 * Math.PI / HUES - Math.PI / HUES, a1 = a0 + 2 * Math.PI / HUES;
+    const piece = svgEl('path', { d: sector(R_OUT - (r + 1) * band, R_OUT - r * band, a0, a1), fill: hex, stroke: hex, 'stroke-width': .6 }, w);
+    piece.onclick = () => setColor(hex);
+  }
+  svgEl('circle', { cx: CX, cy: CY, r: R_OUT, fill: 'none', stroke: 'var(--well)', 'stroke-width': 2 }, w);
+  const white = svgEl('circle', { cx: CX, cy: CY, r: R_IN, fill: '#ffffff', stroke: 'var(--well)', 'stroke-width': 2 }, w);
+  white.style.cursor = 'pointer';
+  white.onclick = () => setColor('#ffffff');
+  svgEl('g', { id: 'marks' }, w);
+}
+function markerAt(hex) {
+  const at = locate(hex), band = (R_OUT - R_IN) / RINGS;
+  if (!at) return [CX, CY];
+  const a = at.i * 2 * Math.PI / HUES, rr = R_OUT - (at.r + .5) * band;
+  return [CX + rr * Math.sin(a), CY - rr * Math.cos(a)];
+}
+function drawMarks() {
+  const g = $('marks'); g.innerHTML = '';
+  const keys = cfg.mode === 'fixed' ? ['colorA'] : (pickKey === 'colorA' ? ['colorB', 'colorA'] : ['colorA', 'colorB']);
+  for (const k of keys) {             // the color being set is drawn last, on top, and larger
+    const [x, y] = markerAt(cfg[k]), on = k === pickKey;
+    svgEl('circle', { cx: x, cy: y, r: on ? 10 : 8, fill: cfg[k], stroke: '#1d1d1f', 'stroke-width': on ? 5 : 4 }, g);
+    svgEl('circle', { cx: x, cy: y, r: on ? 10 : 8, fill: 'none', stroke: '#ffffff', 'stroke-width': on ? 3 : 2 }, g);
+  }
+  $('swA').style.background = cfg.colorA; $('swB').style.background = cfg.colorB;
+  $('wheel').setAttribute('aria-label', `Color wheel, setting the ${pickKey === 'colorA' ? 'calm' : 'energetic'} color`);
+}
+
+// same blend as the lights (temponome.pick_color): around the wheel, the short way
+function blendAt(bpm) {
+  let [ha, sa] = hex2hs(cfg.colorA), [hb, sb] = hex2hs(cfg.colorB);
+  if (cfg.mode === 'fixed') return hsv2hex(ha, sa, 1);
+  if (sa < 0.005) ha = hb;
+  if (sb < 0.005) hb = ha;
+  const t = Math.min(Math.max((bpm - 60) / 120, 0), 1), d = ((hb - ha + 540) % 360) - 180;
+  return hsv2hex(((ha + d * t) % 360 + 360) % 360, sa + (sb - sa) * t, 1);
+}
+function drawStrip() {
+  const s = $('strip'); s.innerHTML = '';
+  const steps = 12, x0 = 4, w = 552, cw = w / steps;
+  for (let k = 0; k < steps; k++)
+    svgEl('rect', { x: x0 + k * cw, y: 18, width: cw + .5, height: 30, fill: blendAt(60 + 120 * (k + .5) / steps) }, s);
+  svgEl('rect', { x: x0, y: 18, width: w, height: 30, rx: 3, fill: 'none', stroke: 'var(--well)', 'stroke-width': 2 }, s);
+  const lab = (x, anchor, text) => { const t = svgEl('text', { x, y: 66, 'text-anchor': anchor, 'font-size': 11, fill: 'var(--mut)' }, s); t.textContent = text; };
+  if (cfg.mode === 'fixed') { lab(x0, 'start', 'every tempo'); return; }
+  lab(x0, 'start', '60 bpm · calm'); lab(x0 + w, 'end', 'energetic · 180 bpm');
+  if (liveBpm) {                    // where the music is now
+    const x = x0 + w * Math.min(Math.max((liveBpm - 60) / 120, 0), 1);
+    svgEl('line', { x1: x, y1: 14, x2: x, y2: 52, stroke: 'var(--ink)', 'stroke-width': 2 }, s);
+    const right = x > x0 + w - 70;
+    const t = svgEl('text', { x: right ? x - 6 : x + 6, y: 11, 'text-anchor': right ? 'end' : 'start', 'font-size': 11, fill: 'var(--ink)' }, s);
+    t.textContent = 'now ' + Math.round(liveBpm);
+  }
+}
+function setColor(hex) {
+  cfg[pickKey] = hex; T.saveCfg({ [pickKey]: hex });
+  drawMarks(); drawStrip();
+}
+function setPick(key) {
+  pickKey = cfg.mode === 'fixed' ? 'colorA' : key;
+  $('pickA').setAttribute('aria-checked', pickKey === 'colorA');
+  $('pickB').setAttribute('aria-checked', pickKey === 'colorB');
+  drawMarks();
+}
+function showMode() {
+  $('pickB').hidden = cfg.mode === 'fixed';
+  setPick(pickKey); drawStrip();
+}
+$('pickA').onclick = () => setPick('colorA');
+$('pickB').onclick = () => setPick('colorB');
+$('wheel').onkeydown = e => {          // arrow keys walk the wheel: left/right = hue, up/down = more vivid / softer
+  const at = locate(cfg[pickKey]) || { i: 0, r: RINGS };
+  let { i, r } = at;
+  if (e.key === 'ArrowLeft') i = (i + HUES - 1) % HUES;
+  else if (e.key === 'ArrowRight') i = (i + 1) % HUES;
+  else if (e.key === 'ArrowUp') r = Math.max(0, r - 1);
+  else if (e.key === 'ArrowDown') r = r + 1;
+  else return;
+  e.preventDefault();
+  setColor(r >= RINGS ? '#ffffff' : pieceHex(i, r));
+};
+$('preview').onclick = async () => {
+  const r = await T.api('/api/preview', { color: cfg[pickKey] });
+  $('pvMsg').className = r.ok ? 'msg' : 'msg err';
+  $('pvMsg').textContent = r.ok ? 'Showing it on your lights for a moment.' : r.error;
+  clearTimeout($('pvMsg').t); $('pvMsg').t = setTimeout(() => { $('pvMsg').textContent = ''; }, 4000);
+};
 document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
-  cfg.mode = r.value; T.saveCfg({ mode: r.value }); $('boxB').style.opacity = r.value === 'fixed' ? .35 : 1;
+  cfg.mode = r.value; T.saveCfg({ mode: r.value }); showMode();
 });
 
 // ---------- sound ----------
@@ -379,14 +473,18 @@ async function init() {
   $('email').value = cfg.email || ''; if (cfg.has_password) $('password').placeholder = 'Saved';
   $('device').value = cfg.device;
   document.querySelector(`input[name=mode][value=${cfg.mode}]`).checked = true;
-  $('boxB').style.opacity = cfg.mode === 'fixed' ? .35 : 1;
   $('lock').setAttribute('aria-checked', !!cfg.lock);
   $('sens').value = cfg.sensitivity; $('minB').value = cfg.minB; $('minBv').textContent = cfg.minB + '%';
   setLead(cfg.lead);
-  makeWheel('wA', 'swA', 'colorA'); makeWheel('wB', 'swB', 'colorB');
+  buildWheel(); showMode();
   renderDevs(); calSummary();
   showTab(location.hash.slice(1));
   setInterval(async () => {
+    if (!$('colors').hidden) {         // keep the strip's "now" marker on the current tempo
+      const s = await T.api('/api/state'), b = s.running ? s.bpm : 0;
+      if (Math.round(b) !== Math.round(liveBpm)) { liveBpm = b; drawStrip(); }
+      return;
+    }
     if ($('sound').hidden) return;
     const s = await T.api('/api/state');
     $('meter').style.width = s.running ? Math.max(0, Math.min(100, (s.db + 70) / 60 * 100)) + '%' : '0';

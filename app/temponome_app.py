@@ -15,8 +15,10 @@ if not getattr(sys, "frozen", False):   # running from the source folder
 
 import temponome  # noqa: E402
 
-# pywebview sizes are the whole window; the macOS title bar takes TITLE_BAR points of that,
-# so add it to the space each page needs (main 600x400, Settings 680x640, measured)
+# pywebview sizes are the whole window. The title bar is see-through and drawn over the
+# page (merge_title_bar), so each page starts with a TITLE_BAR-high strip (`.titlebar` in
+# deck.css, 30 px + rounding) under the window buttons, then the space it needs
+# (main 600x400, Settings 680x640, measured)
 TITLE_BAR = 32
 MAIN_SIZE = (600, 400 + TITLE_BAR)
 MAIN_MIN = (440, 330 + TITLE_BAR)
@@ -52,6 +54,32 @@ def settings_position(main, screen, size=SETTINGS_SIZE, gap=GAP):
         x = max(0, x)
     y = max(MENU_BAR, min(my, sh - h))
     return int(x), int(y), new_mx
+
+
+def merge_title_bar(window, size):
+    """Make the macOS title bar part of the page: see-through, no title text, the page
+    drawn underneath it. The red/yellow/green buttons stay and sit on the panel; the
+    page's `.pywebview-drag-region` strip moves the window. Does nothing off macOS."""
+    try:
+        import AppKit
+        from PyObjCTools import AppHelper
+    except ImportError:
+        return
+
+    def apply():
+        w = getattr(window, "native", None)
+        if w is None:
+            return
+        w.setStyleMask_(w.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView)
+        w.setTitlebarAppearsTransparent_(True)
+        w.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+        # the window loses the title bar's height when its content moves under it: put the
+        # full size back, keeping the top-left corner where it was
+        f = w.frame()
+        top = f.origin.y + f.size.height
+        w.setFrame_display_(AppKit.NSMakeRect(f.origin.x, top - size[1], size[0], size[1]), True)
+
+    AppHelper.callAfter(apply)
 
 
 def free_port(preferred=8765):
@@ -126,6 +154,7 @@ class Api:
         self._settings = webview.create_window(
             "Temponome Settings", f"{self._base}/settings#{tab}", js_api=self,
             width=SETTINGS_SIZE[0], height=SETTINGS_SIZE[1], min_size=SETTINGS_MIN, x=x, y=y)
+        self._settings.events.before_show += lambda: merge_title_bar(self._settings, SETTINGS_SIZE)
         self._settings.events.closed += self._settings_closed
 
     def _settings_closed(self):
@@ -153,6 +182,7 @@ def run():
     main = webview.create_window("Temponome", base + "/", js_api=api,
                                  width=MAIN_SIZE[0], height=MAIN_SIZE[1], min_size=MAIN_MIN)
     api._main = main
+    main.events.before_show += lambda: merge_title_bar(main, MAIN_SIZE)
 
     # os._exit also closes the Settings window and WebKit helpers; settings are saved atomically
     main.events.closed += lambda: on_main_closed(server)

@@ -1,17 +1,22 @@
-/* Temponome look: a small turntable deck (matte body, ribbed platter, silver arm).
-   Dark appearance = black deck, light appearance = white/silver deck. */
+/* Temponome look: a small analog studio device (dark panel, cream VU meter, amber steps).
+   Dark appearance = black panel, light appearance = brushed-silver panel. */
 :root {
-  --body: #f2f2f0; --panel: #e8e8e5; --platter: #dcdcd8; --rib: #cdcdc8; --rim: #9a9a96;
-  --arm: #5a5a5e; --ink: #1d1d1f; --mut: #5e5e63; --line: #d0d0cc; --track: #8a8a86;
+  --body: #d9d9d5; --panel: #e6e6e2; --line: #b8b8b3; --well: #2b2b2e; --track: #8a8a86;
+  --ink: #1d1d1f; --mut: #55555a; --cap: #4a4a4f;
+  --cream: #efe4c4; --cream-2: #e3d6b2; --scale: #3a3428; --zone: #b8402a;
+  --amber: #ffb02e; --amber-off: #3a362e; --knob: #f4f4f2; --knob-line: #77777c; --screw: #b0b0ab;
   --accent: #e2531b; --on-accent: #ffffff;
-  --accent-fill: #c2410c;   /* darker orange behind text, so white text stays readable (4.5:1+) */ --ok: #2e9d57; --wait: #b07a12; --warn: #c25e00; --err: #d63b3b;
+  --accent-fill: #c2410c;   /* darker orange behind text, so white text stays readable (4.5:1+) */
+  --ok: #2e9d57; --wait: #b07a12; --warn: #c25e00; --err: #d63b3b;
   --focus: #0a64d8;
+  --titlebar: 30px;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --body: #1b1b1c; --panel: #232325; --platter: #2a2a2c; --rib: #343437; --rim: #c7c7cc;
-    --arm: #c7c7cc; --ink: #f2f2f5; --mut: #a1a1a8; --line: #3a3a3d; --track: #76767b;
+    --body: #2a2a2f; --panel: #232327; --line: #3a3a40; --well: #141416; --track: #76767b;
+    --ink: #ececef; --mut: #a1a1a8; --cap: #9a9aa0;
+    --amber-off: #2e2a22; --knob: #d8d8dc; --knob-line: #6e6e74; --screw: #1a1a1d;
     --ok: #4cc47a; --wait: #e0b14a; --warn: #ff9f45; --err: #ff6b6b; --focus: #4c9bff;
   }
 }
@@ -26,6 +31,9 @@ body {
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .mut { color: var(--mut); }
 .marking { font-size: 11px; letter-spacing: .02em; color: var(--mut); }
+.caption { font-size: 11px; letter-spacing: .03em; color: var(--cap); }
+/* the window's title bar is see-through: this strip sits under the window buttons and drags the window */
+.titlebar { height: var(--titlebar); flex: none; }
 
 button {
   font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
@@ -39,7 +47,7 @@ input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; hei
 input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--track); }
 input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; margin-top: -7.5px;
-  background: var(--rim); border: 1px solid var(--arm);
+  background: var(--knob); border: 1px solid var(--knob-line);
 }
 
 /* two-position slide switch, like a turntable speed switch */
