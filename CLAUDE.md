@@ -87,12 +87,13 @@ anything they must do on their Mac, and keep the double-click launcher working.
   working until the owner has used the installed app for a while.
 - `tests/simulate.py`: runs the real `Engine` against fake lights and synthetic
   music (it mocks `tapo` and `sounddevice`). Use it to check any change to beat
-  detection or light timing: `python3 tests/simulate.py` should print `12/12 passed`
+  detection or light timing: `python3 tests/simulate.py` should print `13/13 passed`
   (7 music scenarios, calibration / on-beat, Govee with a fake lamp on 127.0.0.1, live
-  light-list changes, a Tapo bulb that takes 30 s to answer, and a light unplugged mid-song). It needs numpy and scipy. Stop any other Temponome first:
+  light-list changes, a Tapo bulb that takes 30 s to answer, a light unplugged mid-song, and
+  Stop putting the lights back). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (51 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (58 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -148,12 +149,20 @@ anything they must do on their Mac, and keep the double-click launcher working.
    `calAnalyze` (JS) picks the 3% of pixels that change most and finds when they are
    halfway brighter. `calib` = seen − camera delay − round trip, saved per device in ms;
    the nudge is reset to 0. Changing a light's IP clears its calibration.
-8. **Fallbacks:** with no beats for 2.5 s, brightness follows loudness. After 3 s of
+8. **Put back on Stop:** while connecting (before `on()`), `take_snapshot` reads each light's
+   look (Tapo `get_device_info`: on, brightness, hue/sat or `color_temp` for white; Govee: the
+   `devStatus` read in `connect`) into `Engine.saved` by IP. When `_run` ends (Stop, quit or an
+   error) `_put_back` waits for in-flight sends, then `put_back` restores each light (off stays
+   off, white stays white), 2.5 s cap each. A background restart (light list edited while
+   playing) only restores lights that left the list and keeps the first snapshot of the rest.
+   Effects from the Tapo/Govee apps can't be read; their last plain color comes back. Failures
+   show "Couldn't put back the earlier look of: …". Quitting waits up to 4.5 s for this.
+9. **Fallbacks:** with no beats for 2.5 s, brightness follows loudness. After 3 s of
    true silence the status says "Can't hear any music…". "Flash lights" (Settings →
    Lights) pulses all lights once. A second running copy (e.g. old launcher + app) gets a
    plain "Another copy of Temponome…" message: the Govee socket deliberately has no
    SO_REUSEPORT.
-9. **Status line:** `status_text()` turns state into one sentence + level
+10. **Status line:** `status_text()` turns state into one sentence + level
    (ok/wait/warn/error/idle), e.g. "Listening · 3 lights · on the beat". Raw errors stay
    in `error` (shown as a tooltip). The severity key is `status_level` because `level`
    is the music loudness.

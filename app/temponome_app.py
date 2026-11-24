@@ -120,7 +120,7 @@ def shutdown_all(server):
     eng = temponome.ENGINE
     eng.stop()
     if eng.thread:
-        eng.thread.join(3.0)
+        eng.thread.join(temponome.RESTORE_TIMEOUT + 2.0)   # lets the lights get their earlier look back
     eng.running = False
     server.shutdown()
     server.server_close()

@@ -277,6 +277,98 @@ class ColorBlend(unittest.TestCase):
         self.assertNotIn(T.live_color_hex(self.cfg("#0000ff", "#ff8000"), 120), ("#ffffff", "#808080"))
 
 
+class FakeTapoInfo:
+    def __init__(self, **kw):
+        self.device_on, self.brightness, self.hue, self.saturation = True, 40, 200, 60
+        self.color_temp, self.dynamic_light_effect_enable = 0, False
+        self.__dict__.update(kw)
+
+
+class FakeTapoBulb:
+    """Records what put_back sends, the way the tapo library's builder is used."""
+    def __init__(self, info):
+        self.info, self.calls = info, []
+
+    async def get_device_info(self):
+        return self.info
+
+    async def off(self):
+        self.calls.append(("off",))
+
+    def set(self):
+        bulb, parts = self, []
+
+        class Builder:
+            def brightness(s, b): parts.append(("brightness", b)); return s
+            def hue_saturation(s, h, sat): parts.append(("hue_saturation", h, sat)); return s
+            def color_temperature(s, ct): parts.append(("color_temperature", ct)); return s
+            async def send(s, handler): bulb.calls.append(tuple(parts))
+        return Builder()
+
+
+class RestoreLights(unittest.TestCase):
+    """Play remembers each light's look; Stop puts it back."""
+
+    def run_async(self, coro):
+        import asyncio
+        return asyncio.run(coro)
+
+    def test_tapo_color_is_put_back(self):
+        bulb = FakeTapoBulb(FakeTapoInfo())
+        snap = self.run_async(T.take_snapshot(bulb))
+        self.run_async(T.put_back(bulb, snap))
+        self.assertEqual(bulb.calls, [(("brightness", 40), ("hue_saturation", 200, 60))])
+
+    def test_tapo_white_is_put_back_as_white(self):
+        bulb = FakeTapoBulb(FakeTapoInfo(color_temp=2700, brightness=70))
+        self.run_async(T.put_back(bulb, self.run_async(T.take_snapshot(bulb))))
+        self.assertEqual(bulb.calls, [(("brightness", 70), ("color_temperature", 2700))])
+
+    def test_tapo_that_was_off_goes_off_again(self):
+        bulb = FakeTapoBulb(FakeTapoInfo(device_on=False))
+        self.run_async(T.put_back(bulb, self.run_async(T.take_snapshot(bulb))))
+        self.assertEqual(bulb.calls, [("off",)])
+
+    def test_govee_state_is_put_back(self):
+        lamp = T.GoveeLamp("127.0.0.9")
+        lamp.status = {"onOff": 1, "brightness": 35, "color": {"r": 10, "g": 20, "b": 30}, "colorTemInKelvin": 0}
+        snap = self.run_async(T.take_snapshot(lamp))
+        sent = []
+        old = T.GOVEE.send
+        T.GOVEE.send = lambda ip, cmd, data: sent.append((cmd, data))
+        try:
+            self.run_async(T.put_back(lamp, snap))
+            lamp.status = {"onOff": 0, "brightness": 35, "color": {"r": 0, "g": 0, "b": 0}, "colorTemInKelvin": 0}
+            self.run_async(T.put_back(lamp, self.run_async(T.take_snapshot(lamp))))
+        finally:
+            T.GOVEE.send = old
+        self.assertEqual(sent[:2], [("brightness", {"value": 35}),
+                                    ("colorwc", {"color": {"r": 10, "g": 20, "b": 30}, "colorTemInKelvin": 0})])
+        self.assertEqual(sent[2:], [("turn", {"value": 0})])
+
+    def test_list_change_while_playing_only_puts_back_removed_lights(self):
+        e = T.Engine()
+        kept, gone = FakeTapoBulb(FakeTapoInfo()), FakeTapoBulb(FakeTapoInfo(hue=10))
+        lights = [T.Light(kept, 0, "1.1.1.1"), T.Light(gone, 1, "1.1.1.2")]
+        e.saved = {"1.1.1.1": self.run_async(T.take_snapshot(kept)), "1.1.1.2": self.run_async(T.take_snapshot(gone))}
+        e.cfg = dict(e.cfg, devices=[{"ip": "1.1.1.1"}])
+        e.want_running = True
+        e.stop_evt.set()                       # a background restart, not Stop
+        self.run_async(e._put_back(lights))
+        self.assertEqual((kept.calls, len(gone.calls)), ([], 1))
+        self.assertEqual(list(e.saved), ["1.1.1.1"])   # the kept light's first snapshot survives
+
+    def test_unreadable_light_gives_no_snapshot(self):
+        class Broken:
+            async def get_device_info(self):
+                raise OSError("no answer")
+        self.assertIsNone(self.run_async(T.take_snapshot(Broken())))
+
+    def test_failed_put_back_says_which_light(self):
+        self.assertIn("Kitchen", T.status_text({"running": False, "error": T.RESTORE_MSG + "Kitchen",
+                                                "cfg": {"devices": [{"ip": "x"}]}})[0])
+
+
 class Preview(unittest.TestCase):
     def test_preview_needs_play(self):
         was = T.ENGINE.running

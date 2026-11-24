@@ -337,6 +337,7 @@ class GoveeLamp:
         self.ip = ip
         self.last_b = None
         self.last_rgb = None
+        self.status = None
 
     async def connect(self):
         try:
@@ -350,6 +351,7 @@ class GoveeLamp:
         if st is None:
             raise ConnectionError("Govee lamp did not answer. In the Govee Home app open the lamp, "
                                   "Settings, and switch on LAN Control; also check its IP address.")
+        self.status = st          # how the lamp looked before Play (put back on Stop)
         return self
 
     async def on(self):
@@ -365,6 +367,62 @@ class GoveeLamp:
             GOVEE.send(self.ip, "colorwc", {"color": {"r": rgb[0], "g": rgb[1], "b": rgb[2]},
                                             "colorTemInKelvin": 0})
             self.last_rgb = rgb
+
+
+RESTORE_MSG = "Couldn't put back the earlier look of: "
+RESTORE_TIMEOUT = 2.5   # s per light; quitting waits for this
+
+
+async def take_snapshot(h):
+    """How a light looks right now (on/off, brightness, color or white), read before Play
+    takes it over. None if it can't be read; that light is then left as the music left it.
+    Animated effects from the Tapo/Govee apps can't be read back: their last plain color is used."""
+    try:
+        if isinstance(h, GoveeLamp):
+            st = h.status
+            if not st:
+                return None
+            c = st.get("color") or {}
+            return {"on": st.get("onOff", 1) == 1, "b": int(st.get("brightness", 100)),
+                    "rgb": (int(c.get("r", 255)), int(c.get("g", 255)), int(c.get("b", 255))),
+                    "kelvin": int(st.get("colorTemInKelvin") or 0)}
+        info = await asyncio.wait_for(h.get_device_info(), CONNECT_TIMEOUT)
+        return {"on": bool(info.device_on), "b": int(info.brightness),
+                "hue": info.hue, "sat": info.saturation, "ct": int(info.color_temp or 0)}
+    except Exception:
+        return None
+
+
+async def put_back(h, snap):
+    """Return a light to a snapshot from take_snapshot."""
+    if isinstance(h, GoveeLamp):
+        if not snap["on"]:
+            GOVEE.send(h.ip, "turn", {"value": 0})
+            return
+        GOVEE.send(h.ip, "brightness", {"value": max(1, min(100, snap["b"]))})
+        if snap["kelvin"]:
+            GOVEE.send(h.ip, "colorwc", {"color": {"r": 0, "g": 0, "b": 0}, "colorTemInKelvin": snap["kelvin"]})
+        else:
+            r, g, b = snap["rgb"]
+            GOVEE.send(h.ip, "colorwc", {"color": {"r": r, "g": g, "b": b}, "colorTemInKelvin": 0})
+        return
+    if not snap["on"]:
+        await h.off()
+        return
+    b = max(1, min(100, snap["b"]))
+    try:
+        req = h.set().brightness(b)
+        if snap["ct"]:                         # it was in white mode
+            req = req.color_temperature(snap["ct"])
+        elif snap["hue"] is not None:
+            req = req.hue_saturation(int(snap["hue"]), int(snap["sat"] or 0))
+        await req.send(h)
+    except AttributeError:                     # older tapo versions: one setting per command
+        await h.set_brightness(b)
+        if snap["ct"]:
+            await h.set_color_temperature(snap["ct"])
+        elif snap["hue"] is not None:
+            await h.set_hue_saturation(int(snap["hue"]), int(snap["sat"] or 0))
 
 
 class BeatTracker:
@@ -633,6 +691,7 @@ class Engine:
         self.calib_n = 0
         self.light_info = []    # [{"pos", "idx", "ip"}] for the connected lights
         self.lamps = []         # [{"name", "b", "hex", "ok"}]: what each light shows now (deck lamps)
+        self.saved = {}         # ip -> how that light looked before Play (take_snapshot); kept across restarts
         self.preview = None     # (hue, sat, until): a color shown on all lights from Settings
         self.missing = []       # names (or IPs) of lights that did not answer at the last start
         self.restarts = 0
@@ -758,6 +817,10 @@ class Engine:
                 h = await GoveeLamp(d["ip"]).connect()
             else:
                 h = await getattr(client, d["model"])(d["ip"])
+            if d["ip"] not in self.saved:   # a background restart keeps the first snapshot
+                snap = await take_snapshot(h)
+                if snap:
+                    self.saved[d["ip"]] = snap
             await h.on()
             L = Light(h, i, d["ip"])
             L.name = d.get("name") or d["ip"]
@@ -773,8 +836,6 @@ class Engine:
                                            return_exceptions=True)
         finally:
             self.connecting = False
-        if self.stop_evt.is_set():          # Stop or a newer restart arrived while connecting
-            return
         lights, problems, missing = [], [], []
         for (i, d), r in zip(devs, results):
             if isinstance(r, Exception):
@@ -783,6 +844,32 @@ class Engine:
                 missing.append(d.get("name") or d["ip"])
             else:
                 lights.append(r)
+        try:
+            await self._play(lights, problems, missing, c, sd)
+        finally:
+            await self._put_back(lights)
+
+    async def _put_back(self, lights):
+        """After playing: return each light to how it looked before Play. A background
+        restart (light list changed while playing) only puts back lights that left the list."""
+        for _ in range(100):                    # let commands already on their way land first
+            if not any(L.busy for L in lights):
+                break
+            await asyncio.sleep(0.01)
+        restarting = self.want_running and self.stop_evt.is_set()   # not Stop, not a crash
+        keep = {d["ip"] for d in self.cfg["devices"] if d["ip"]} if restarting else set()
+        todo = [(L, self.saved.pop(L.ip)) for L in lights if L.ip not in keep and L.ip in self.saved]
+        results = await asyncio.gather(*[asyncio.wait_for(put_back(L.handle, snap), RESTORE_TIMEOUT)
+                                         for L, snap in todo], return_exceptions=True)
+        failed = [L.name for (L, _), r in zip(todo, results) if isinstance(r, Exception)]
+        if not restarting:
+            self.saved.clear()
+        if not self.want_running:              # the user pressed Stop: say only what matters now
+            self.error = (RESTORE_MSG + ", ".join(failed)) if failed else ""
+
+    async def _play(self, lights, problems, missing, c, sd):
+        if self.stop_evt.is_set():          # Stop or a newer restart arrived while connecting
+            return
         self.missing = missing
         if not lights:
             raise ValueError("Could not connect to any light. " + " | ".join(problems))
@@ -963,6 +1050,8 @@ def status_text(st):
             return "No lights yet · find them in Settings", "idle"
         if not err or err == SILENT_MSG:
             return "Ready · press Play", "idle"
+        if err.startswith(RESTORE_MSG):
+            return err, "warn"
         if SECOND_COPY_MSG in err:
             return SECOND_COPY_MSG, "error"
         if "need your Tapo account" in err:

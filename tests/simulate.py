@@ -45,6 +45,7 @@ def install_fakes(sent, song):
         def __init__(s, ip): s.ip = ip
         def brightness(s, b): s.b = b; return s
         def hue_saturation(s, h, sat): s.h = h; return s
+        def color_temperature(s, ct): s.h = ("white", ct); return s
         async def send(s, bulb):
             await asyncio.sleep(0.12)  # typical Wi-Fi round trip
             if s.ip in FAILING:
@@ -54,7 +55,11 @@ def install_fakes(sent, song):
     class Bulb:
         def __init__(s, ip): s.ip = ip
         async def on(s): pass
+        async def off(s): sent[s.ip].append((time.time(), "off", None))
         def set(s): return FakeSet(s.ip)
+        async def get_device_info(s):     # how the bulb looked before Play: green, 30 %
+            return types.SimpleNamespace(device_on=True, brightness=30, hue=120, saturation=80,
+                                         color_temp=0, dynamic_light_effect_enable=False)
 
     class Api:
         def __init__(s, *a, **kw): pass
@@ -266,6 +271,35 @@ def run_govee_checks(bpm=120):
     return ok_all
 
 
+def run_restore_checks():
+    """Stop puts every light back the way it looked before Play."""
+    lamp = FakeGovee()
+    try:
+        sent = collections.defaultdict(list)
+        app = load_app(sent, make_song(0.08, 120, False))
+        e = app.ENGINE
+        e.cfg.update(email="a", password="b", devices=[
+            {"ip": "1.1.1.5", "model": "l530", "color": "blend", "offset": 0, "calib": None, "name": "Kitchen"},
+            {"ip": "127.0.0.1", "model": "govee", "color": "blend", "offset": 0, "calib": None, "name": "Desk"}])
+        e.start()
+        time.sleep(4)
+        pulses = len(sent["1.1.1.5"])
+        t_stop = time.time()
+        e.stop()
+        time.sleep(1.5)
+        tapo_after = [(b, h) for t, b, h in sent["1.1.1.5"] if t > t_stop]
+        govee_after = [(c, d) for t, c, d in lamp.log if t > t_stop]
+        ok = (pulses > 5 and tapo_after and tapo_after[-1] == (30, 120)
+              and ("brightness", {"value": 50}) in govee_after
+              and ("colorwc", {"color": {"r": 255, "g": 0, "b": 0}, "colorTemInKelvin": 0}) in govee_after
+              and not e.running and e.error == "" and e.saved == {})
+        print(f"{'PASS' if ok else 'FAIL'}  stop puts lights back -> tapo {tapo_after[-1:] or '-'} (expect (30, 120)), "
+              f"govee {[c for c, _ in govee_after]}, err {e.error!r}")
+        return ok
+    finally:
+        lamp.close()
+
+
 def run_live_relist_checks():
     """Changing the light list while playing applies at once; a light that does not answer
     is reported by name and does not stop the others or cause restart loops."""
@@ -406,5 +440,6 @@ if __name__ == "__main__":
     results.append(run_live_relist_checks())
     results.append(run_slow_light_checks())
     results.append(run_dropout_checks())
+    results.append(run_restore_checks())
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)
