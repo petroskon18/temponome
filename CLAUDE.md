@@ -208,6 +208,9 @@ anything they must do on their Mac, and keep the double-click launcher working.
   sample-accurate. The goal is to feel on-beat.
 
 ## Not verified on real hardware yet
+- Pass-through confirmed by the owner on 2026-11-24 (test build, MacBook speakers, real
+  Tapo + Govee lights): lights on time, sound fine, Play and Stop put everything back.
+  Not yet tried: Bluetooth speakers, a speaker disconnecting mid-song, recovery after a crash.
 - Webcam calibration worked on the owner's real lights (2026-11-23): Tapo L530
   calib −55 ms (lights up ~100 ms after a send, round trip ~156 ms) and Govee H6052
   calib +188 ms (UDP round trip reads 0). The phase check is only simulation-tested.
