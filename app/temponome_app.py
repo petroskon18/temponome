@@ -73,6 +73,13 @@ def merge_title_bar(window, size):
         w.setStyleMask_(w.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView)
         w.setTitlebarAppearsTransparent_(True)
         w.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+        if w.respondsToSelector_("setTitlebarSeparatorStyle:"):
+            w.setTitlebarSeparatorStyle_(AppKit.NSTitlebarSeparatorStyleNone)
+        # pywebview paints the title bar's container gray (windowBackgroundColor), which
+        # would still show as a separate bar over the page: make it see-through too
+        for v in w.contentView().superview().subviews():
+            if "TitlebarContainer" in str(v.className()) and v.respondsToSelector_("setBackgroundColor:"):
+                v.setBackgroundColor_(AppKit.NSColor.clearColor())
         # the window loses the title bar's height when its content moves under it: put the
         # full size back, keeping the top-left corner where it was
         f = w.frame()

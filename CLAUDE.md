@@ -66,7 +66,9 @@ anything they must do on their Mac, and keep the double-click launcher working.
 - **Title bar** (`merge_title_bar`): see-through and drawn over the page in both windows
   (full-size content view, hidden title); pages start with a `.titlebar` strip (30 px,
   class `pywebview-drag-region`, drags the window). Turning this on shrinks the window by
-  the title bar, so it resets the frame to the full size. Checked in real windows: pages
+  the title bar, so it resets the frame to the full size. pywebview paints the
+  `NSTitlebarContainerView` gray (windowBackgroundColor), which showed as a separate bar
+  in 1.1.0; it is now set to clear and the title bar separator is turned off. Checked in real windows: pages
   get 600x432 and 680x672.
 - **Window sizes** (`app/temponome_app.py`): window sizes include `TITLE_BAR` (32 pt). Measured page needs: deck 600x400, Settings 680x640; minimums 440x330 and
   480x420. The deck layout shrinks the record with the window (`--s` in main.html) so it
