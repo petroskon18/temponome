@@ -702,6 +702,9 @@ class PassThroughEngine(unittest.TestCase):
         import audio_route
         self.assertEqual(T.status_text({"running": False, "error": audio_route.NO_BLACKHOLE_MSG}),
                          (audio_route.NO_BLACKHOLE_MSG, "error"))
+        # how the engine thread actually stores it
+        self.assertEqual(T.status_text({"running": False, "error": "RuntimeError: " + audio_route.NO_BLACKHOLE_MSG}),
+                         (audio_route.NO_BLACKHOLE_MSG, "error"))
 
     def test_launch_puts_sound_back_after_a_crash(self):
         import audio_route as AR

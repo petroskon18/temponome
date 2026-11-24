@@ -1234,7 +1234,7 @@ def status_text(st):
             return "Ready · press Play", "idle"
         if err.startswith(RESTORE_MSG):
             return err, "warn"
-        if err.startswith(audio_route.NO_BLACKHOLE_MSG):
+        if audio_route.NO_BLACKHOLE_MSG in err:
             return audio_route.NO_BLACKHOLE_MSG, "error"
         if SECOND_COPY_MSG in err:
             return SECOND_COPY_MSG, "error"

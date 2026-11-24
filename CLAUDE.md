@@ -167,6 +167,10 @@ anything they must do on their Mac, and keep the double-click launcher working.
    Lights) pulses all lights once. A second running copy (e.g. old launcher + app) gets a
    plain "Another copy of Temponome…" message: the Govee socket deliberately has no
    SO_REUSEPORT.
+10. **Status line:** `status_text()` turns state into one sentence + level
+   (ok/wait/warn/error/idle), e.g. "Listening · 3 lights · on the beat". Raw errors stay
+   in `error` (shown as a tooltip). The severity key is `status_level` because `level`
+   is the music loudness.
 11. **Play music through Temponome** (pass-through, Settings > Sound, setting `passthru`,
    spec `docs/superpowers/specs/2026-11-24-pass-through-design.md`): on Play, `audio_route`
    (CoreAudio via ctypes) saves the current output UID in settings (`restore_out`, for crash
@@ -183,10 +187,6 @@ anything they must do on their Mac, and keep the double-click launcher working.
    in ~15 s; the Mac's two volume converters are not inverses, so `level_for_db` bisects
    'v2db' only; a stream that runs dry refills to the full delay. Speaker vanishes → plays on
    the built-in speakers, status "Your speaker disconnected · playing on …".
-10. **Status line:** `status_text()` turns state into one sentence + level
-   (ok/wait/warn/error/idle), e.g. "Listening · 3 lights · on the beat". Raw errors stay
-   in `error` (shown as a tooltip). The severity key is `status_level` because `level`
-   is the music loudness.
 
 ## History and lessons
 - Nov 2026 real-bulb test: "off the beat" had two causes. The owner's settings (max
