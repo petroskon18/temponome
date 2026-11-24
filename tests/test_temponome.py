@@ -445,6 +445,18 @@ class AudioRoute(unittest.TestCase):
         self.assertEqual(self.fake.cur, 2)
         self.assertEqual(self.saved, [""])
 
+    def test_recover_gives_volume_back_after_a_crash(self):
+        self.AR.take_over_volume("MBA")              # speaker at full, BlackHole at -12 dB
+        self.fake.cur, self.fake.dbs[1] = 1, -20.0    # crashed while on BlackHole, owner turned it down
+        self.assertTrue(self.AR.recover({"restore_out": "MBA", "restore_vol": True}, self.save))
+        self.assertEqual(self.fake.dbs[2], -20.0)     # speaker not left at full volume
+        self.assertEqual(self.fake.vols[1], 1.0)
+
+    def test_recover_leaves_volume_alone_if_it_was_not_moved(self):
+        self.fake.cur = 1
+        self.AR.recover({"restore_out": "MBA", "restore_vol": False}, self.save)
+        self.assertEqual(self.fake.dbs[2], -12.0)
+
     def test_recover_does_nothing_when_user_changed_it(self):
         self.fake.cur = 3
         self.assertFalse(self.AR.recover({"restore_out": "MBA"}, self.save))
@@ -463,6 +475,13 @@ class AudioRoute(unittest.TestCase):
         self.AR.give_back_volume(state)
         self.assertEqual(self.fake.dbs[2], -20.0)      # speaker keeps the last level
         self.assertEqual(self.fake.vols[1], 1.0)       # BlackHole back to full
+
+    def test_level_for_decibels(self):
+        curve = lambda v: -63.5 * (1 - v) ** 2                 # any rising curve
+        v = self.AR.level_for_db(curve, -4.0)
+        self.assertAlmostEqual(curve(v), -4.0, delta=0.05)
+        self.assertEqual(self.AR.level_for_db(curve, 5.0), 1.0)    # louder than possible: full
+        self.assertEqual(self.AR.level_for_db(curve, -90.0), 0.0)
 
     def test_chosen_missing_falls_back_to_previous(self):
         self.assertEqual(self.AR.pick_speaker("GONE", "JBL")["uid"], "JBL")
@@ -515,6 +534,19 @@ class DelayedSound(unittest.TestCase):
         y = np.concatenate(out)
         self.assertEqual(int(np.argmax(y[:, 0])), round(0.3 * 44100))
 
+    def test_delay_comes_back_after_running_dry(self):
+        line = self.P.DelayLine(44100, 0.1)
+        for _ in range(40):                              # speaker started before any sound came in
+            line.pull(512)
+        x = np.zeros((44032, 2), np.float32)
+        x[0] = 1.0
+        out = []
+        for k in range(0, 44032, 512):
+            line.push(x[k:k + 512])
+            out.append(line.pull(512))
+        y = np.concatenate(out)
+        self.assertEqual(int(np.argmax(y[:, 0])), round(0.1 * 44100))
+
     def test_stereo_kept(self):
         line = self.P.DelayLine(44100, 0.1)
         x = np.zeros((8192, 2), np.float32)
@@ -543,6 +575,20 @@ class DelayedSound(unittest.TestCase):
             if k > 100:
                 worst = max(worst, abs(line.buffered() / rate - 0.3))
         self.assertLess(worst, 0.006)
+
+    def test_bursty_input_is_not_mistaken_for_drift(self):
+        rate, line = 44100, self.P.DelayLine(44100, 0.2)
+        block = np.zeros((512, 2), np.float32)
+        settled = None
+        for k in range(int(30 * rate / 512)):            # BlackHole delivers 4 blocks at a time
+            if k % 4 == 0:
+                for _ in range(4):
+                    line.push(block)
+            line.pull(512)
+            if k == int(15 * rate / 512):
+                settled = line.adjusted                   # a one-off settle at the start is fine
+        self.assertEqual(line.adjusted, settled)         # after that, no frames dropped or repeated
+        self.assertLess(settled, 0.03 * rate)
 
     def test_lost_speaker_falls_back(self):
         FakeOut.made = []

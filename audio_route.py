@@ -118,22 +118,54 @@ class CoreAudioBackend:
             except OSError:
                 continue
 
-    def volume_db(self, dev_id):
+    def _convert(self, dev_id, sel, value):
+        """CoreAudio's own scalar <-> decibel converters ('v2db', 'db2v'): the value goes in
+        and comes back out in the same buffer."""
+        ca = self._lib()
+        buf = ctypes.c_float(float(value))
+        size = ctypes.c_uint32(ctypes.sizeof(buf))
         for el in (0, 1):
-            v = self._get(dev_id, "vcdb", self.OUTPUT, ctype=ctypes.c_float, elem=el)
-            if v is not None:
-                return float(v)
-        return None
+            a = _Addr(_fourcc(sel), self.OUTPUT, el)
+            if ca.AudioObjectHasProperty(dev_id, ctypes.byref(a)):
+                if not ca.AudioObjectGetPropertyData(dev_id, ctypes.byref(a), 0, None,
+                                                     ctypes.byref(size), ctypes.byref(buf)):
+                    return float(buf.value)
+        # no converter (BlackHole): its level runs evenly in decibels across its range
+        # (measured: half volume = -32 dB of a -64..0 dB range)
+        class _Range(ctypes.Structure):
+            _fields_ = [("lo", ctypes.c_double), ("hi", ctypes.c_double)]
+        r = self._get(dev_id, "vdb#", self.OUTPUT, ctype=_Range)
+        if r is None or r.hi <= r.lo:
+            return None
+        if sel == "v2db":
+            return r.lo + (r.hi - r.lo) * max(0.0, min(1.0, value))
+        return max(0.0, min(1.0, (value - r.lo) / (r.hi - r.lo)))
+
+    def volume_db(self, dev_id):
+        v = self.volume(dev_id)
+        return None if v is None else self._convert(dev_id, "v2db", v)
 
     def set_volume_db(self, dev_id, db):
-        v = ctypes.c_float(float(db))
-        for el in (0, 1, 2):
-            try:
-                self._set(dev_id, "vcdb", v, self.OUTPUT, el)
-                if el == 0:
-                    return
-            except OSError:
-                continue
+        # only the level -> decibel reading is used: the Mac's two converters are not exact
+        # opposites (measured: -4.0 dB -> 0.878 -> -7.7 dB on the MacBook speakers)
+        if self._convert(dev_id, "v2db", 1.0) is not None:
+            self.set_volume(dev_id, level_for_db(lambda v: self._convert(dev_id, "v2db", v), db))
+
+
+def level_for_db(to_db, db):
+    """The 0..1 volume level at which to_db(level) gives `db` (to_db rises with the level)."""
+    if db >= to_db(1.0):
+        return 1.0
+    if db <= to_db(0.0):
+        return 0.0
+    lo, hi = 0.0, 1.0
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        if to_db(mid) < db:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
 
 
 BACKEND = CoreAudioBackend()
@@ -199,6 +231,9 @@ def recover(cfg, save):
         return False
     bh = blackhole()
     if bh is not None and default_output() == bh["uid"]:
+        spk = _by_uid(prev)
+        if cfg.get("restore_vol") and spk is not None:
+            give_back_volume({"bh": bh["id"], "spk": spk["id"]})   # don't leave the speaker at full
         restore_output(prev, save)
         return True
     save("")

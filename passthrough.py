@@ -2,8 +2,10 @@
 
 DelayLine: a stereo ring buffer that keeps the sound exactly `delay_s` late. BlackHole and
 the speaker run on separate clocks that drift apart (a few seconds per day), so when the
-buffered amount wanders more than 5 ms from the target, one frame per pull is dropped or
-repeated until it is back within 1 ms; a single frame is inaudible.
+buffered amount (averaged over ~2 s, because BlackHole delivers in bursts) wanders more than
+5 ms from the target, one frame per pull is dropped or repeated until it is back within
+1 ms; a single frame is inaudible. If it ever runs dry it goes quiet and refills to the
+full delay before playing again.
 
 Player: plays a DelayLine to a speaker. If the speaker disappears (Bluetooth switched
 off), check() reopens on the fallback speaker and records that in fell_back.
@@ -20,10 +22,13 @@ class DelayLine:
         self.rate, self.ch = rate, channels
         self.target = int(round(delay_s * rate))
         self.buf = np.zeros((max(self.target * 2, rate) + rate, channels), np.float32)
-        self.read = 0             # frames ever pulled
+        self.read = 0             # read position (frames)
+        self.written = 0          # write position (frames)
         self.fixing = 0           # +1 dropping frames, -1 repeating frames, 0 within range
+        self.adjusted = 0         # frames dropped or repeated so far (drift correction)
+        self.priming = True       # waiting for `target` of sound before playing (start, or after running dry)
+        self.avg = 0.0            # smoothed amount waiting (frames)
         self.lock = threading.Lock()
-        self.written = self.target  # frames ever pushed, counting `target` frames of starting silence
 
     def buffered(self):
         return self.written - self.read
@@ -44,22 +49,39 @@ class DelayLine:
 
     def pull(self, n):
         with self.lock:
-            extra = self.buffered() - n - self.target
-            lim, ok = int(0.005 * self.rate), max(1, int(0.001 * self.rate))
+            if self.priming:
+                if self.buffered() < self.target or self.buffered() == 0:
+                    return np.zeros((n, self.ch), np.float32)
+                # start so that every frame comes out exactly `target` after it went in
+                # (frames before the first one are silence: the buffer was cleared)
+                self.read = self.written - n - self.target
+                self.priming, self.fixing = False, 0
+                self.avg = float(self.target)
+            elif self.buffered() < n:              # ran dry: clear and wait to fill up again
+                self.buf[:] = 0
+                self.read = self.written
+                self.priming = True
+                return np.zeros((n, self.ch), np.float32)
+            # BlackHole hands over sound in bursts, so the amount waiting swings by tens of ms
+            # from one moment to the next; only its ~2 s average shows real clock drift
+            a = min(1.0, n / (2.0 * self.rate))
+            self.avg += a * ((self.buffered() - n) - self.avg)
+            extra = self.avg - self.target
+            lim, ok = 0.005 * self.rate, max(1.0, 0.001 * self.rate)
             if self.fixing == 0 and abs(extra) > lim:
                 self.fixing = 1 if extra > 0 else -1
             elif self.fixing and abs(extra) <= ok:
                 self.fixing = 0
-            avail = self.buffered()
-            take = min(n, max(0, avail))
-            idx = (self.read + np.arange(take)) % len(self.buf)
-            out = np.zeros((n, self.ch), np.float32)
-            out[:take] = self.buf[idx]
-            self.read += take
+            idx = (self.read + np.arange(n)) % len(self.buf)
+            out = self.buf[idx].copy()
+            self.read += n
+            take = n
             if self.fixing > 0 and self.buffered() > n:
                 self.read += 1                         # drop one frame
+                self.adjusted += 1
             elif self.fixing < 0 and take:
                 self.read -= 1                         # repeat one frame
+                self.adjusted += 1
             return out
 
 

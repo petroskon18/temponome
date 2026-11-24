@@ -57,6 +57,7 @@ DEFAULTS = {
     "out_device": "",      # speaker UID for pass-through ("" = the one used before Play)
     "spk_delay": {},       # speaker UID -> its own delay in ms (wireless speakers play late)
     "restore_out": "",     # output to put back after pass-through (kept in case of a crash)
+    "restore_vol": False,  # True while BlackHole holds the speaker's volume (see take_over_volume)
     "lead": 60,            # ms to fire early to cover bulb lag
     "smooth": 0.4,         # 0 = snappy short pulses, 1 = long smooth pulses
 }
@@ -993,6 +994,13 @@ class Engine:
         """Remember (in settings, so it survives a crash) which output to put back."""
         with CONFIG_LOCK:
             self.cfg = dict(self.cfg, restore_out=uid)
+            if not uid:
+                self.cfg["restore_vol"] = False
+            save_config(self.cfg)
+
+    def _save_vol(self, moved):
+        with CONFIG_LOCK:
+            self.cfg = dict(self.cfg, restore_vol=bool(moved))
             save_config(self.cfg)
 
     def _start_passthrough(self, c, lights, sd):
@@ -1017,6 +1025,8 @@ class Engine:
             fallback = builtin["name"] if builtin and builtin["uid"] != spk["uid"] else None
             line = passthrough.DelayLine(SAMPLE_RATE, delay)
             pt["vol"] = audio_route.take_over_volume(spk["uid"])
+            if pt["vol"]:
+                self._save_vol(True)
             pt["player"] = player = passthrough.Player(sd, spk["name"], fallback, line, SAMPLE_RATE)
             player.start()
             out_lat = float(getattr(player.stream, "latency", 0.0) or 0.0)
@@ -1307,7 +1317,8 @@ def _apply_config_locked(body):
         except (TypeError, ValueError):
             pass
     new["spk_delay"] = spk
-    new["restore_out"] = ENGINE.cfg.get("restore_out", "")    # only the engine writes this
+    new["restore_out"] = ENGINE.cfg.get("restore_out", "")    # only the engine writes these
+    new["restore_vol"] = ENGINE.cfg.get("restore_vol", False)
     relist = (_light_set(new["devices"]) != _light_set(ENGINE.cfg["devices"])
               or new["passthru"] != ENGINE.cfg.get("passthru", False)
               or (new["passthru"] and new["out_device"] != ENGINE.cfg.get("out_device", "")))
