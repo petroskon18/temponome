@@ -455,6 +455,55 @@ def run_color_pulse_checks(bpm=120):
     return ok
 
 
+def make_bass_treble():
+    """One second of a deep bass note, then one second of cymbal-like hiss, over and over."""
+    n = SR * 2
+    t = np.arange(n) / SR
+    spec = np.fft.rfft(np.random.default_rng(6).standard_normal(n))
+    spec[np.fft.rfftfreq(n, 1 / SR) < 5000] = 0
+    hiss = np.fft.irfft(spec, n)
+    loop = np.where(t < 1.0, 0.3 * np.sin(2 * np.pi * 70 * t), 0.3 * hiss / hiss.std())
+
+    def song(t0):
+        idx = (int(round(t0 * SR)) + np.arange(512)) % n
+        return (loop[idx] + 0.002 * np.random.randn(512)).astype(np.float32)
+    return song
+
+
+def run_sound_shape_checks():
+    """Sound bars: a bass light and a treble light take turns as the song moves between a bass
+    note and hiss; pitch to color: the third light goes red for the bass, blue for the hiss."""
+    sent = collections.defaultdict(list)
+    app = load_app(sent, make_bass_treble())
+    e = app.Engine()
+    e.cfg.update(email="a", password="b", lock=True, minB=10, maxB=100, devices=[
+        {"ip": "1.1.1.1", "model": "l530", "color": "blend", "offset": 0, "sound": "low"},
+        {"ip": "1.1.1.2", "model": "l530", "color": "blend", "offset": 0, "sound": "high"},
+        {"ip": "1.1.1.3", "model": "l530", "color": "blend", "offset": 0, "sound": "pitch"}])
+    e.start()
+    time.sleep(9)
+    end = time.time()
+    e.stop()
+    time.sleep(0.3)
+
+    def at(ip, t, i):           # what the light showed at time t (sends happen on change)
+        rows = [r for r in sent[ip] if r[0] <= t]
+        return rows[-1][i] if rows else None
+    grid = np.arange(end - 6, end, 0.05)
+    low = np.array([at("1.1.1.1", t, 1) or 0 for t in grid])
+    high = np.array([at("1.1.1.2", t, 1) or 0 for t in grid])
+    hue = np.array([at("1.1.1.3", t, 2) or 0 for t in grid])
+    both = float(np.mean((low >= 70) & (high >= 70)))
+    turns = float(np.mean((low >= 70) | (high >= 70)))
+    red, blue = float(np.mean(hue <= 40)), float(np.mean(hue >= 200))
+    # both bars are briefly up where the sound switches: each bulb answers in ~0.12 s, so one
+    # hasn't dimmed yet while the other has brightened (4 switches in 6 s * ~0.2 s = ~13-17 %)
+    ok = turns > 0.8 and both < 0.25 and red > 0.3 and blue > 0.3
+    print(f"{'PASS' if ok else 'FAIL'}  sound bars and pitch color -> one bar up {turns:.0%} of the time, "
+          f"both {both:.0%}; pitch light red {red:.0%}, blue {blue:.0%}")
+    return ok
+
+
 def run_sound_light_checks(bpm=120):
     """One light follows the kick drum, another the hi-hats (one between each beat)."""
     sent = collections.defaultdict(list)
@@ -657,5 +706,6 @@ if __name__ == "__main__":
     results.append(run_accent_checks())
     results.append(run_bar_color_checks())
     results.append(run_drop_checks())
+    results.append(run_sound_shape_checks())
     print(f"\n{sum(results)}/{len(results)} passed")
     sys.exit(0 if all(results) else 1)

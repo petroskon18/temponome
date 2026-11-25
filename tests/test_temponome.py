@@ -832,6 +832,100 @@ class SoundsApart(unittest.TestCase):
         self.assertEqual([d["sound"] for d in devs], ["hats", "beat", "beat"])
 
 
+def feed(parts, sr=44100):
+    """Feed BeatTracker a list of (seconds, signal function of t) parts; returns the tracker
+    and the (time, levels, pitch, loud) snapshot taken at the end of each part."""
+    tr = T.BeatTracker()
+    snaps, t0 = [], 100.0
+    rng = np.random.default_rng(5)
+    for secs, fn in parts:
+        t = np.arange(int(secs * sr)) / sr
+        x = (fn(t, rng) + 0.002 * rng.standard_normal(len(t))).astype(np.float32)
+        for k in range(len(x) // T.BLOCK):
+            tr.process(x[k * T.BLOCK:(k + 1) * T.BLOCK], 1.5, now=t0 + k * T.BLOCK / sr)
+        t0 += secs
+        snaps.append(tr.shape_at(t0))
+    return tr, snaps
+
+
+def tone(f, a=0.3):
+    return lambda t, rng: a * np.sin(2 * np.pi * f * t)
+
+
+def hiss(lo, a=0.3):
+    def fn(t, rng):
+        spec = np.fft.rfft(rng.standard_normal(len(t)))
+        spec[np.fft.rfftfreq(len(t), 1 / 44100) < lo] = 0
+        n = np.fft.irfft(spec, len(t))
+        return a * n / n.std()
+    return fn
+
+
+SILENT = lambda t, rng: 0 * t
+
+
+class SoundShape(unittest.TestCase):
+    """Sound bars (one light per band: bass, middle, treble) and pitch to color."""
+
+    def test_bass_tone_fills_the_bass_bar(self):
+        _, s = feed([(3, tone(80))])
+        lv = s[-1]["levels"]
+        self.assertGreater(lv["low"], 0.8)
+        self.assertLess(lv["high"], 0.3)
+
+    def test_treble_hiss_fills_the_treble_bar(self):
+        _, s = feed([(3, hiss(4000))])
+        lv = s[-1]["levels"]
+        self.assertGreater(lv["high"], 0.8)
+        self.assertLess(lv["low"], 0.3)
+
+    def test_voice_range_fills_the_middle_bar(self):
+        _, s = feed([(3, tone(700))])
+        lv = s[-1]["levels"]
+        self.assertGreater(lv["mid"], 0.8)
+        self.assertLess(lv["low"], 0.3)
+        self.assertLess(lv["high"], 0.3)
+
+    def test_bars_fall_when_the_sound_stops(self):
+        _, s = feed([(3, tone(80)), (1, SILENT)])
+        self.assertLess(s[-1]["levels"]["low"], 0.2)
+
+    def test_bar_follows_its_own_loudness(self):
+        # a bass that gets quieter by half (-6 dB) shows a lower bar, not still full
+        _, s = feed([(3, tone(80, 0.3)), (1.5, tone(80, 0.15)), (1.5, tone(80, 0.04))])
+        self.assertGreater(s[0]["levels"]["low"], s[1]["levels"]["low"] + 0.08)
+        self.assertGreater(s[1]["levels"]["low"], s[2]["levels"]["low"] + 0.15)
+
+    def test_pitch_low_to_high(self):
+        _, s = feed([(2, tone(90)), (2, tone(800)), (2, hiss(5000))])
+        p = [x["pitch"] for x in s]
+        self.assertLess(p[0], 0.2)
+        self.assertTrue(0.3 < p[1] < 0.7, p[1])
+        self.assertGreater(p[2], 0.8)
+
+    def test_loudness_follows_volume(self):
+        _, s = feed([(3, tone(300, 0.3)), (1.5, tone(300, 0.03)), (1, SILENT)])
+        self.assertGreater(s[0]["loud"], 0.8)
+        self.assertLess(s[1]["loud"], s[0]["loud"] - 0.3)
+        self.assertLess(s[2]["loud"], 0.15)
+
+    def test_shape_at_picks_the_moment_asked(self):
+        # with pass-through the tracker runs ahead (heard time); a light shows what is heard then
+        tr, _ = feed([(2, tone(80)), (0.6, hiss(5000))])     # 1.5 s of history is kept
+        self.assertLess(tr.shape_at(101.9)["pitch"], 0.3)
+        self.assertGreater(tr.shape_at(102.55)["pitch"], 0.7)
+
+    def test_pitch_colors_run_red_to_blue(self):
+        self.assertEqual(T.pitch_hue(0.0), 0)
+        self.assertEqual(T.pitch_hue(0.5), 120)
+        self.assertEqual(T.pitch_hue(1.0), 240)
+        self.assertEqual(T.pitch_hue(1.7), 240)
+
+    def test_new_choices_are_kept(self):
+        devs = T.clean_devices([{"ip": "1.2.3.4", "sound": s} for s in ("low", "mid", "high", "pitch")])
+        self.assertEqual([d["sound"] for d in devs], ["low", "mid", "high", "pitch"])
+
+
 def run_tracker(x, sr=44100, start=100.0):
     """Feed audio to BeatTracker and poll it like the engine does; returns the tracker and the
     beats it scheduled as (time, first beat of the bar?, bar number)."""

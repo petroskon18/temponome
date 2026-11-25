@@ -87,15 +87,15 @@ anything they must do on their Mac, and keep the double-click launcher working.
   working until the owner has used the installed app for a while.
 - `tests/simulate.py`: runs the real `Engine` against fake lights and synthetic
   music (it mocks `tapo` and `sounddevice`). Use it to check any change to beat
-  detection or light timing: `python3 tests/simulate.py` should print `19/19 passed`
+  detection or light timing: `python3 tests/simulate.py` should print `20/20 passed`
   (7 music scenarios, calibration / on-beat, Govee with a fake lamp on 127.0.0.1, live
   light-list changes, a Tapo bulb that takes 30 s to answer, a light unplugged mid-song,
   Stop putting the lights back, pass-through landing the light on the heard kick,
   color pulse, one light per drum on a clean drum loop, a stronger beat 1, colors turning
-  every 4 bars, and a breakdown followed by a drop). It needs numpy and scipy. Stop any other Temponome first:
+  every 4 bars, a breakdown followed by a drop, and sound bars plus pitch to color). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (123 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (133 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -218,6 +218,22 @@ anything they must do on their Mac, and keep the double-click launcher working.
    A breakdown longer than 90 s (`BREAK_MAX`) is just a quiet part. Found on real tracks,
    e.g. the long synth break in "Won't Get Fooled Again" (drop at 7:45). Lesson: a clock
    that starts at 0 broke `now or time.time()` style checks; use `is None`.
+
+16. **Sound bars and pitch to color** (device `sound`: low | mid | high | pitch, Settings >
+   Lights): `BeatTracker._shape` measures bass 40–250 Hz, middle 250–2000 Hz, treble
+   2–12 kHz each block as 0..1 like an EQ bar (dB against the band's own ~10 s loudest, over
+   `BAR_RANGE` 20 dB, but never against less than the loudest band − `BAR_FLOOR` 25 dB, so a
+   band holding only noise stays dark); bars rise at once and fall with a 0.1 s half-life.
+   A bar light's brightness = its band's level. Pitch to color: hue 0 (red, bass) → 120
+   (green) → 240 (blue, treble) from the bands weighted by how far each is above its usual
+   (~4 s) level, `PITCH_PUSH` 12; brightness = overall loudness over 30 dB. A plain average
+   stayed green 70–97 % of the time on 8 real songs (all bands always play); the "above usual"
+   weighting gives ~23 % red / 58 % green / 20 % blue. `shape_at(now + light latency)` reads the
+   value that will be heard when the command lands (history 1.5 s, needed for pass-through).
+   The owner's Govee H6052 has no separately colorable zones (checked 2026-11-25: camera
+   tests of razer/ptReal segment commands, Govee app data `sku_ic.json` lists it with 0 ICs),
+   so an EQ display on one lamp isn't possible; sound bars spread the bands across lights.
+   Its LAN API does accept `ptReal` BLE packets (power 33 01, colour 33 05 0D RGB).
 
 ## History and lessons
 - Nov 2026 real-bulb test: "off the beat" had two causes. The owner's settings (max

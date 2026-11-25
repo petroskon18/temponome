@@ -48,13 +48,17 @@ function renderDevs() {
     info.append(title, sub);
     const sound = document.createElement('select');
     sound.setAttribute('aria-label', `What ${lname(d)} reacts to`);
-    sound.innerHTML = '<option value="beat">On the beat</option><option value="kick">Kick drum</option><option value="snare">Snare</option><option value="hats">Hi-hats</option>';
-    sound.value = d.sound || 'beat'; sound.onchange = () => { d.sound = sound.value; saveDevices(); };
+    sound.innerHTML = '<option value="beat">On the beat</option><option value="kick">Kick drum</option><option value="snare">Snare</option><option value="hats">Hi-hats</option>'
+      + '<optgroup label="Sound bars"><option value="low">Bass level</option><option value="mid">Middle level</option><option value="high">Treble level</option></optgroup>'
+      + '<option value="pitch">Pitch to color</option>';
+    sound.value = d.sound || 'beat';
+    sound.onchange = () => { d.sound = sound.value; color.hidden = cfg.pulse === 'color' || d.sound === 'pitch'; saveDevices(); };
     const color = document.createElement('select');
     color.setAttribute('aria-label', `Color for ${lname(d)}`);
     color.innerHTML = '<option value="blend">Tempo blend</option><option value="A">Always color A</option><option value="B">Always color B</option>';
     color.value = d.color; color.onchange = () => { d.color = color.value; saveDevices(); };
-    color.hidden = cfg.pulse === 'color';     // with a color pulse every light goes calm -> energetic
+    // with a color pulse every light goes calm -> energetic; pitch to color picks its own color
+    color.hidden = cfg.pulse === 'color' || d.sound === 'pitch';
     const rm = document.createElement('button'); rm.textContent = 'Remove';
     rm.setAttribute('aria-label', `Remove ${lname(d)}`);
     rm.onclick = () => { cfg.devices.splice(i, 1); saveDevices(); renderDevs(); renderFinder(); calSummary(); };

@@ -67,7 +67,15 @@ DEFAULTS = {
 }
 
 
-SOUNDS = ("beat", "kick", "snare", "hats")   # what a light reacts to
+SOUNDS = ("beat", "kick", "snare", "hats", "low", "mid", "high", "pitch")   # what a light reacts to
+BARS = ("low", "mid", "high")   # sound bars: the light's brightness follows that band's level
+SHAPE_BANDS = {"low": (40, 250), "mid": (250, 2000), "high": (2000, 12000)}   # Hz
+BAR_RANGE = 20.0     # dB from an empty bar to a full one
+BAR_FLOOR = 25.0     # dB: a band is never compared with less than the loudest band minus this
+LOUD_RANGE = 30.0    # dB from dark to full brightness for "pitch to color"
+BAR_FALL = 0.1       # s: half-life of a falling bar (it rises at once)
+PITCH_PUSH = 12.0    # pitch to color: how strongly a band louder than its usual level pulls the color
+PITCH_USUAL = 4.0    # s: what counts as "usual" for each band
 MODELS = ("l530", "l535", "l630", "l900", "l920", "l930", "govee")
 
 
@@ -502,6 +510,14 @@ class BeatTracker:
         self.tempo_known = False   # False while bpm is still the 110 placeholder
         self.steady = True         # setting "Smooth out tempo jumps"; off = the pre-Nov-24 rules
         self.glide_t = None
+        # sound bars and pitch to color: each band's level against its own recent loudest
+        self.shape_masks = {b: (self.freqs >= lo) & (self.freqs < hi) for b, (lo, hi) in SHAPE_BANDS.items()}
+        self.shape_peak = {b: 1e-12 for b in SHAPE_BANDS}
+        self.shape_lv = {b: 0.0 for b in SHAPE_BANDS}
+        self.shape_avg = {b: 0.0 for b in SHAPE_BANDS}   # each band's usual level (~4 s)
+        self.loud_peak, self.loud = 1e-12, 0.0
+        self.pitch = 0.0
+        self.shape_hist = deque(maxlen=int(self.FPS * 1.5))   # (time, snapshot), for shape_at
 
     # called from the audio thread for every block
     def process(self, block, sens, now=None):
@@ -548,6 +564,7 @@ class BeatTracker:
                     ok = ok and e >= energy["snare"]
                 self._hit(b, ok, now)
             hist.append(e)
+        self._shape(mag, now)
         onset = (audible and (hit_bass or hit_flux)
                  and now - self.last_onset > 0.22)
         if onset:
@@ -561,6 +578,46 @@ class BeatTracker:
         if now - self.last_est > 0.5 and len(self.flux_hist) > self.FPS * 4:
             self.last_est = now
             self._estimate_tempo(now)
+
+    def _shape(self, mag, now):
+        """Levels of bass / middle / treble (0..1, like the bars of an EQ display), overall
+        loudness, and where the sound sits (0 = deep bass .. 1 = treble)."""
+        fall = 0.5 ** (1.0 / (self.FPS * BAR_FALL))
+        pw = mag ** 2
+        energy = {b: float(pw[m].sum()) for b, m in self.shape_masks.items()}
+        for b, e in energy.items():
+            self.shape_peak[b] = max(e, self.shape_peak[b] * 0.9989, 1e-12)
+        top = max(self.shape_peak.values())
+        for b, e in energy.items():
+            ref = max(self.shape_peak[b], top * 10 ** (-BAR_FLOOR / 10))
+            v = min(1.0, max(0.0, 1.0 + 10 * np.log10(max(e, 1e-20) / ref) / BAR_RANGE))
+            self.shape_lv[b] = v if v > self.shape_lv[b] else self.shape_lv[b] * fall + v * (1 - fall)
+        total = sum(energy.values())
+        self.loud_peak = max(total, self.loud_peak * 0.9989, 1e-12)
+        v = min(1.0, max(0.0, 1.0 + 10 * np.log10(max(total, 1e-20) / self.loud_peak) / LOUD_RANGE))
+        self.loud = v if v > self.loud else self.loud * fall + v * (1 - fall)
+        # where the sound sits: real music always has some bass, middle and treble, so a plain
+        # average stays green; weight each band by how far it is above its usual level instead
+        a = 1.0 / (self.FPS * PITCH_USUAL)
+        w = {}
+        for b, lv in self.shape_lv.items():
+            self.shape_avg[b] += (lv - self.shape_avg[b]) * a
+            w[b] = lv * float(np.exp(PITCH_PUSH * (lv - self.shape_avg[b])))
+        if sum(w.values()) > 0.02:               # hold the last color while it's quiet
+            p = (0.5 * w["mid"] + w["high"]) / sum(w.values())
+            self.pitch += (p - self.pitch) * 0.15
+        self.shape_hist.append((now, {"levels": dict(self.shape_lv), "pitch": self.pitch, "loud": self.loud}))
+
+    def shape_at(self, t):
+        """The sound bars / pitch / loudness as they were at time t (the latest before it)."""
+        if not self.shape_hist:
+            return {"levels": {b: 0.0 for b in SHAPE_BANDS}, "pitch": 0.0, "loud": 0.0}
+        snap = self.shape_hist[0][1]
+        for ts, s in self.shape_hist:
+            if ts > t:
+                break
+            snap = s
+        return snap
 
     def _hit(self, band, yes, now):
         if yes and now - self.last_hit[band] > self.HIT_GAP[band]:
@@ -861,6 +918,11 @@ def hsv_hex(hue, sat):
 
 PREVIEW_SECONDS = 1.5
 HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def pitch_hue(p):
+    """Where the sound sits -> hue: deep bass red (0), voices green (120), treble blue (240)."""
+    return int(round(240 * min(1.0, max(0.0, p))))
 
 
 def preview_color(hex_color):
@@ -1307,7 +1369,10 @@ class Engine:
 
                     fired = False
                     sound = dcfg.get("sound", "beat")
-                    if sound in hits:
+                    shape = sound in BARS or sound == "pitch"
+                    if shape:
+                        tn_l = None      # follows the sound itself: no beat to keep the bulb free for
+                    elif sound in hits:
                         # this light follows one sound: flash on each of its hits (as heard)
                         for ht, idx in hits[sound]:
                             if idx > L.last_hit and ht - lead <= now:
@@ -1355,6 +1420,16 @@ class Engine:
                         diff = ((target_hue - L.hue_now + 180) % 360) - 180
                         L.hue_now = (L.hue_now + diff * min(1.0, dt * 1.5)) % 360
                         hue = int(round(L.hue_now / 4.0) * 4) % 360
+                    if shape:
+                        # what will be heard when this command reaches the bulb
+                        sh = tracker.shape_at(now + L.lat)
+                        if sound == "pitch":     # color = where the sound sits, brightness = loudness
+                            hue, sat = int(round(pitch_hue(sh["pitch"]) / 8.0) * 8), 100
+                            L.hue_now = float(hue)
+                            lv = sh["loud"]
+                        else:                    # sound bar: brightness = this band's level
+                            lv = sh["levels"][sound]
+                        b = max(1, min(100, int(round((cfg["minB"] + span * lv) / 10.0) * 10)))
                     pv = self.preview
                     if pv and now < pv[2]:            # Settings is previewing a color: show it plainly
                         hue, sat, b = pv[0], max(1, pv[1]), max(1, min(100, int(cfg["maxB"])))
