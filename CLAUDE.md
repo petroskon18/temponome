@@ -255,6 +255,7 @@ anything they must do on their Mac, and keep the double-click launcher working.
   sample-accurate. The goal is to feel on-beat.
 
 ## Not verified on real hardware yet
+- Sound bars and pitch to color confirmed by the owner on 2026-11-25 (test build, real lights).
 - Color pulse and one-drum-per-light confirmed working by the owner on 2026-11-24 (test
   build, real lights).
 - Pass-through confirmed by the owner on 2026-11-24 (test build, MacBook speakers, real
