@@ -25,6 +25,10 @@ The main window looks like a small piece of studio gear. Press Play: the meter's
 - **Brightness or color.** In Settings → Colors, choose what each beat changes. *Brightness* flashes the lights brighter. *Color* keeps them at a steady brightness and makes them jump from your calm color to your energetic one on every beat, then fade back.
 - **One drum per light.** In Settings → Lights, each light can follow the beat, or just one drum: the **kick**, the **snare** or the **hi-hats**. For example, one lamp can thump with the kick while another flickers with the hi-hats. The snare choice may also catch guitar or voice, which sit in the same range. Drums land best with *Play music through Temponome* on (below).
 - **Together or Chase.** On the main window, lights that follow the beat can flash together or take turns.
+- **Extras** (Settings → Colors):
+  - **Stronger flash on the first beat of each bar.** Beat 1 flashes full and beats 2–4 flash softer, so you can feel where each bar starts.
+  - **Turn the colors around the wheel.** Every 4 or 8 bars, both of your colors move a step around the color wheel, so a long song keeps changing.
+  - **Build-ups and drops.** When the drums go away (a breakdown), the lights dim and rise with the music. When the beat comes back, every light bursts to full and fades slowly.
 
 ## Lights exactly on the beat
 
