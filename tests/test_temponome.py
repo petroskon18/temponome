@@ -921,6 +921,40 @@ class SoundShape(unittest.TestCase):
         self.assertEqual(T.pitch_hue(1.0), 240)
         self.assertEqual(T.pitch_hue(1.7), 240)
 
+    def test_shape_at_is_safe_while_the_audio_thread_adds(self):
+        # the audio thread appends to the history while the light loop reads it
+        import threading
+        tr = T.BeatTracker()
+        stop = threading.Event()
+        snap = {"levels": {"low": 0.5, "mid": 0.5, "high": 0.5}, "pitch": 0.5, "loud": 0.5}
+
+        def audio():
+            t = 0.0
+            while not stop.is_set():
+                t += 0.01
+                tr.shape_hist.append((t, snap))
+        th = threading.Thread(target=audio)
+        th.start()
+        try:
+            for _ in range(20000):
+                tr.shape_at(1e9)
+        finally:
+            stop.set()
+            th.join()
+
+    def test_flash_and_drops_reach_shape_lights(self):
+        self.assertEqual(T.shape_level(0.2, boost=1.0, dim=1.0), 1.0)    # Flash lights / drop burst
+        self.assertAlmostEqual(T.shape_level(0.8, boost=0.0, dim=0.3), 0.24)   # breakdown: dimmed
+        self.assertAlmostEqual(T.shape_level(0.8, boost=0.1, dim=1.0), 0.8)
+
+    def test_chase_takes_turns_among_beat_lights_only(self):
+        pos = T.beat_positions(["beat", "low", "beat", "pitch"])
+        self.assertEqual(pos, {0: 0, 2: 1})
+        # beats 1..4 alternate between the two beat lights; no beat is lost to the bar lights
+        got = [[k for k, p in pos.items() if T.chase_turn(i, p, len(pos))] for i in range(1, 5)]
+        self.assertEqual(got, [[0], [2], [0], [2]])
+        self.assertTrue(T.chase_turn(7, 0, 1))      # a single beat light flashes on every beat
+
     def test_new_choices_are_kept(self):
         devs = T.clean_devices([{"ip": "1.2.3.4", "sound": s} for s in ("low", "mid", "high", "pitch")])
         self.assertEqual([d["sound"] for d in devs], ["low", "mid", "high", "pitch"])

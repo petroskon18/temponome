@@ -351,6 +351,10 @@ function micChosen() {
   const d = inputs.find(x => x.id === String(cfg.device));
   return !!(cfg.device !== '' && d && !/blackhole/i.test(d.name));
 }
+// the diagram shows the real delay while music is playing through Temponome (kept fresh by the poll)
+function flowDelay(s) {
+  $('flowMid').textContent = s && s.running && s.pass_delay ? `hears it ${s.pass_delay.toFixed(1)} s early` : 'hears it early';
+}
 function showPass() {
   const why = !outs.blackhole ? 'Install BlackHole 2ch to use this.'
     : micChosen() ? 'Choose BlackHole 2ch above to use this.' : '';
@@ -358,7 +362,7 @@ function showPass() {
   $('passthru').disabled = !!why;
   $('passthru').setAttribute('aria-checked', on);
   $('flow').classList.toggle('on', on);
-  $('flowMid').textContent = st && st.pass_delay ? `hears it ${st.pass_delay.toFixed(1)} s early` : 'hears it early';
+  flowDelay(st);
   $('ptWhy').hidden = !why; $('ptWhy').textContent = why;
   $('outDev').disabled = $('spk').disabled = !on;
   $('device').disabled = on;
@@ -597,6 +601,7 @@ async function init() {
     if ($('sound').hidden) return;
     const s = await T.api('/api/state');
     $('meter').style.width = s.running ? Math.max(0, Math.min(100, (s.db + 70) / 60 * 100)) + '%' : '0';
+    flowDelay(s);
   }, 150);
 }
 init();

@@ -610,10 +610,13 @@ class BeatTracker:
 
     def shape_at(self, t):
         """The sound bars / pitch / loudness as they were at time t (the latest before it)."""
-        if not self.shape_hist:
+        # the audio thread keeps adding to the history: copy it first (one step, safe across
+        # threads), since walking a deque while another thread appends raises an error
+        hist = list(self.shape_hist)
+        if not hist:
             return {"levels": {b: 0.0 for b in SHAPE_BANDS}, "pitch": 0.0, "loud": 0.0}
-        snap = self.shape_hist[0][1]
-        for ts, s in self.shape_hist:
+        snap = hist[0][1]
+        for ts, s in hist:
             if ts > t:
                 break
             snap = s
@@ -918,6 +921,26 @@ def hsv_hex(hue, sat):
 
 PREVIEW_SECONDS = 1.5
 HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def shape_level(lv, boost, dim):
+    """A sound-bar / pitch light's level: dimmed during a build-up (`dim`), and lifted by a
+    flash or a drop's burst (`boost`, fading like a beat flash)."""
+    return max(lv * dim, boost)
+
+
+def beat_positions(sounds):
+    """For Chase: each light on the beat -> its place in the turn order (other lights skip)."""
+    pos = {}
+    for k, s in enumerate(sounds):
+        if (s or "beat") == "beat":
+            pos[k] = len(pos)
+    return pos
+
+
+def chase_turn(beat_n, pos, n_beat):
+    """Is beat number `beat_n` (from 1) the turn of the beat light at place `pos`?"""
+    return n_beat <= 1 or (beat_n - 1) % n_beat == pos
 
 
 def pitch_hue(p):
@@ -1363,6 +1386,8 @@ class Engine:
                 self.locked = (tn is not None) if cfg["lock"] else None
 
                 lamps = []
+                turns = beat_positions([(live[L.idx] if L.idx < len(live) else {}).get("sound", "beat")
+                                        for L in lights])
                 for k, L in enumerate(lights):
                     dcfg = live[L.idx] if L.idx < len(live) else {}
                     lead = light_lead(L, dcfg, cfg, mean_lat)
@@ -1383,7 +1408,8 @@ class Engine:
                         for bt, idx, first in events:
                             if idx > L.last_idx and bt - lead <= now:
                                 L.last_idx, L.last_bt = idx, bt
-                                if cfg["multi"] == "sync" or n == 1 or (idx - 1) % n == k:
+                                # Chase takes turns among the lights on the beat only
+                                if cfg["multi"] == "sync" or chase_turn(idx, turns.get(k, 0), len(turns)):
                                     fired = True
                                     # stronger flash on beat 1 of each bar, softer on 2-4
                                     L.hit = 1.0 if first or not cfg.get("accent") else ACCENT_SOFT
@@ -1429,6 +1455,13 @@ class Engine:
                             lv = sh["loud"]
                         else:                    # sound bar: brightness = this band's level
                             lv = sh["levels"][sound]
+                        # Flash lights and a drop's burst lift it; a build-up dims it like the others
+                        if burst or manual:
+                            L.boost = 1.0
+                        else:
+                            L.boost *= 0.5 ** (dt / (BURST_HALF_LIFE if in_burst else half_life))
+                        dim = peak if cfg.get("drops") and tracker.breakdown else 1.0
+                        lv = shape_level(lv, L.boost, dim)
                         b = max(1, min(100, int(round((cfg["minB"] + span * lv) / 10.0) * 10)))
                     pv = self.preview
                     if pv and now < pv[2]:            # Settings is previewing a color: show it plainly
@@ -1471,6 +1504,7 @@ class Light:
         self.hit = 1.0       # how hard the next beat flash is (beat 1 vs 2-4)
         self.last_drop = 0.0
         self.burst_until = 0.0
+        self.boost = 0.0     # sound-bar / pitch lights: a flash or burst on top of the level
         self.busy = False
         self.min_gap = 0.07  # s between commands
         self.fails = 0       # commands failed in a row

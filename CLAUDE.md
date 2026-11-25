@@ -97,7 +97,7 @@ anything they must do on their Mac, and keep the double-click launcher working.
   every 4 bars, a breakdown followed by a drop, and sound bars plus pitch to color). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (133 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (136 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -236,6 +236,10 @@ anything they must do on their Mac, and keep the double-click launcher working.
    tests of razer/ptReal segment commands, Govee app data `sku_ic.json` lists it with 0 ICs),
    so an EQ display on one lamp isn't possible; sound bars spread the bands across lights.
    Its LAN API does accept `ptReal` BLE packets (power 33 01, colour 33 05 0D RGB).
+   Review fixes (2026-11-26): `shape_at` copies the history first (`list(deque)`), because
+   walking a deque while the audio thread appends raises "deque mutated during iteration";
+   Flash lights and a drop's burst lift shape lights (`L.boost`, `shape_level`) and a build-up
+   dims them; Chase takes turns among lights on the beat only (`beat_positions`, `chase_turn`).
 
 ## History and lessons
 - Nov 2026 real-bulb test: "off the beat" had two causes. The owner's settings (max

@@ -17,7 +17,8 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .stage { flex: 1; min-height: 0; display: flex; justify-content: center; gap: clamp(10px, 3vw, 28px); padding: 6px 24px 0; }
 .lamp { flex: 1 1 0; max-width: 150px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .lamp svg { flex: 1; min-height: 0; width: 100%; display: block; }
-.lamp .fill { transition: y .08s linear, height .08s linear, fill .12s linear; }
+/* the fill is scaled up from the shade's bottom edge: a CSS transform animates in WebKit too */
+.lamp .fill { transform-box: view-box; transform-origin: 50px 114px; transform: scaleY(0); transition: transform .08s linear, fill .12s linear; }
 .lamp .name { max-width: 100%; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lamp .does { max-width: 100%; font-size: 12px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lamp.off .name { color: var(--mut); }
@@ -112,7 +113,8 @@ function makeLamp(i) {
   const clip = el('clipPath', { id: 'shade' + i }, el('defs', {}, svg));
   el('polygon', { points: SHADE }, clip);
   el('polygon', { points: SHADE, fill: 'var(--shade-off)' }, svg);
-  el('rect', { class: 'fill', x: 0, width: 100, y: BOT, height: 0, 'clip-path': `url(#shade${i})` }, svg);
+  // the clip sits on a group, so scaling the colored rect inside it keeps the shade's shape
+  el('rect', { class: 'fill', x: 0, width: 100, y: TOP, height: BOT - TOP }, el('g', { 'clip-path': `url(#shade${i})` }, svg));
   el('ellipse', { class: 'glow', cx: 50, cy: 119, rx: 44, ry: 4, opacity: 0 }, svg);
   const name = document.createElement('span'); name.className = 'name';
   const does = document.createElement('span'); does.className = 'does';
@@ -129,8 +131,7 @@ function renderLamps() {
     const e = box.children[i], lit = st.running && l.hex && l.ok;
     const lvl = lit ? Math.max(0.06, l.b / 100) : 0;
     const fill = e.querySelector('.fill'), glow = e.querySelector('.glow');
-    const h = (BOT - TOP) * lvl;
-    fill.setAttribute('y', (BOT - h).toFixed(1)); fill.setAttribute('height', h.toFixed(1));
+    fill.style.transform = `scaleY(${lvl.toFixed(3)})`;
     fill.setAttribute('fill', lit ? l.hex : 'transparent');
     glow.setAttribute('fill', lit ? l.hex : 'transparent'); glow.setAttribute('opacity', (lvl * 0.45).toFixed(2));
     e.querySelector('.name').textContent = l.name;
