@@ -290,5 +290,9 @@ anything they must do on their Mac, and keep the double-click launcher working.
 ## Ideas the owner may want next
 - Port to Rust (smaller app, faster start); the owner asked and chose to keep Python
   for now (2026-11-24). The tapo library is already Rust underneath.
+  2026-11-26: porting only the sound analysis was measured and skipped: `BeatTracker`
+  analyses 60 s of a real song in 0.22 s (0.4 % of one core), and numpy must stay anyway
+  (sounddevice needs it), so Rust would save neither noticeable CPU nor app size. If battery
+  matters, measure the whole running app first (light loop, window polling).
 - Use the L920/L930 strip segments for per-segment effects.
 - Presets for colors and behavior.
