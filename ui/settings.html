@@ -27,6 +27,44 @@ input[type=number] { width: 80px; }
 button.primary { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
 .msg { font-size: 12px; white-space: pre-line; margin-top: 8px; }
 .msg.err { color: var(--err); }
+/* a light: lamp shade, name, color, remove; below it what the light reacts to */
+#devList .row { align-items: flex-start; padding: 12px 0; }
+#devList .shade { width: 34px; height: 34px; flex: none; }
+#devList .shade polygon { fill: var(--cream); stroke: var(--line); }
+#devList .shade ellipse { fill: var(--amber); opacity: .35; }
+.react { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; padding-left: 46px; }
+.chips { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 16px; background: var(--line); }
+.chips.solo { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.chiplbl { font-size: 11px; color: var(--mut); padding: 0 8px 0 10px; }
+.chips button { border: 0; background: transparent; min-height: 28px; padding: 3px 11px; border-radius: 14px; font-size: 12px; }
+.chips button[aria-checked=true] { background: var(--accent-fill); color: var(--on-accent); }
+/* Colors: the two beat choices as big buttons, the extras as cards with a small picture */
+.beatpick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.beatpick button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 12px 14px; border-radius: 10px; background: var(--panel); }
+.beatpick button[aria-checked=true] { box-shadow: inset 0 0 0 2px var(--accent); }
+.beatpick svg { width: 96px; height: 40px; margin-bottom: 4px; }
+.beatpick .bt { font-weight: 600; }
+.beatpick .bs { font-size: 12px; color: var(--mut); }
+.beatpick .dim { fill: var(--shade-off); } .beatpick .lit { fill: var(--amber); }
+.beatpick .calm { fill: #ff7a2e; } .beatpick .energy { fill: #e0245e; }
+.extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.card svg { width: 100%; height: 46px; }
+.card .ctl { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.card .hint { margin: 0; }
+.card .lit { fill: var(--amber); } .card .half { fill: var(--amber); opacity: .45; }
+.card .ring { stroke: var(--line); } .card .arcA { stroke: #ff7a2e; } .card .arcB { stroke: #e0245e; }
+.card .curve { stroke: var(--amber); } .card .burst { fill: var(--amber); }
+/* Sound: how the music travels with Play through Temponome (dimmed while it's off) */
+.flow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; opacity: .5; transition: opacity .2s; }
+.flow.on { opacity: 1; }
+.flow .node { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); text-align: center; }
+.flow .node.mid { border-color: var(--accent); }
+.flow .node svg { width: 28px; height: 26px; fill: none; stroke: var(--mut); stroke-width: 2; }
+.flow .node .lamp { fill: var(--cream); stroke: var(--line); stroke-width: 1; } .flow .node .arm { stroke: #6b4f2a; stroke-width: 2.5; stroke-linecap: round; }
+.flow .node b { font-size: 13px; font-weight: 600; }
+.flow .node small { font-size: 11px; color: var(--mut); }
+.flow .arrow { width: 30px; height: 12px; flex: none; fill: none; stroke: var(--track); stroke-width: 2; }
 .found { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
 .found:first-child { border-top: 0; }
 .found small { color: var(--mut); }
@@ -43,6 +81,7 @@ button.primary { background: var(--accent-fill); color: var(--on-accent); border
 video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
 .switch .track:disabled, select:disabled, input[type=range]:disabled { opacity: .45; cursor: default; }
 #calFlash { position: fixed; inset: 0; background: #000; display: none; z-index: 99; color: #777; padding: 20px; font-size: 16px; }
+@media (max-width: 560px) { .flow .arrow { width: 16px; } .react { padding-left: 0; } .extras { grid-template-columns: 1fr; } .beatpick { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .pickbox { grid-template-columns: 1fr; justify-items: center; } .tabs button { min-width: 0; } }
 </style></head>
 <body>
@@ -73,8 +112,7 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
   <div class="row"><label for="addModel" class="grow">Type</label><select id="addModel"></select></div>
   <div class="row"><span class="grow"></span><button id="addBtn">Add light</button></div>
  </div>
- <p class="hint">Each light can react to the beat or to one drum: the kick, the snare or the hi-hats. Drums land best with Play music through Temponome (Sound tab). The snare choice may also catch guitar or voice.</p>
- <p class="hint">Sound bars: a light set to Bass, Middle or Treble level grows brighter as that part of the sound gets louder, like the bars of an equalizer. Give each light a different one. Pitch to color: the light turns red for deep bass, green for voices and guitars, blue for cymbals, and its brightness follows the loudness.</p>
+ <p class="hint">Drums land best with Play music through Temponome (Sound tab); the snare may also catch guitar or voice. Bar: the light grows brighter as the bass, middle or treble gets louder, so three lights with one each work like an equalizer. Pitch to color: red for deep bass, green for voices and guitars, blue for cymbals.</p>
  <p class="hint">Govee lamps need LAN Control switched on: in the Govee Home app open the lamp and tap the settings gear.</p>
 
  <h2>Tapo account</h2>
@@ -88,18 +126,34 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
 <!-- Colors -->
 <section id="colors" role="tabpanel" aria-labelledby="tab-colors" hidden>
  <h2>On each beat</h2>
- <div class="group">
-  <div class="row"><label class="grow"><input type="radio" name="pulse" value="brightness"> Brightness: the light flashes brighter</label></div>
-  <div class="row"><label class="grow"><input type="radio" name="pulse" value="color"> Color: the light jumps from the calm to the energetic color and fades back, at steady brightness</label></div>
+ <div class="beatpick" role="radiogroup" aria-label="What each beat changes">
+  <button role="radio" id="pulseB" data-v="brightness" aria-checked="true">
+   <svg viewBox="0 0 120 50" aria-hidden="true"><polygon class="dim" points="8,44 40,44 33,10 15,10"/><polygon class="lit" points="46,44 78,44 71,10 53,10"/><polygon class="dim" points="84,44 116,44 109,10 91,10"/></svg>
+   <span class="bt">Flash brighter</span><span class="bs">Same color, the light flashes on the beat</span></button>
+  <button role="radio" id="pulseC" data-v="color" aria-checked="false">
+   <svg viewBox="0 0 120 50" aria-hidden="true"><polygon class="calm" points="8,44 40,44 33,10 15,10"/><polygon class="energy" points="46,44 78,44 71,10 53,10"/><polygon class="calm" points="84,44 116,44 109,10 91,10"/></svg>
+   <span class="bt">Jump calm → energetic</span><span class="bs">Steady brightness, the color jumps and fades back</span></button>
  </div>
  <h2>Extras</h2>
- <div class="group">
-  <div class="row"><span class="grow" id="accentLbl">Stronger flash on the first beat of each bar<br><span class="hint" style="margin:0">Beats 2, 3 and 4 flash softer</span></span>
-   <span class="switch"><button class="track" id="accent" role="switch" aria-labelledby="accentLbl" aria-checked="false"><span class="knob"></span></button></span></div>
-  <div class="row"><label for="barShift" class="grow">Turn the colors around the wheel<br><span class="hint" style="margin:0">Both colors move a step together, so the pair stays matched</span></label>
-   <select id="barShift"><option value="0">Never</option><option value="4">Every 4 bars</option><option value="8">Every 8 bars</option></select></div>
-  <div class="row"><span class="grow" id="dropsLbl">Build-ups and drops<br><span class="hint" style="margin:0">When the drums go away the lights dim and rise with the music; when the beat comes back they burst</span></span>
-   <span class="switch"><button class="track" id="drops" role="switch" aria-labelledby="dropsLbl" aria-checked="false"><span class="knob"></span></button></span></div>
+ <div class="extras">
+  <div class="card">
+   <svg viewBox="0 0 200 54" aria-hidden="true"><polygon class="lit" points="6,50 46,50 37,4 15,4"/><polygon class="half" points="60,50 92,50 85,22 67,22"/><polygon class="half" points="106,50 138,50 131,22 113,22"/><polygon class="half" points="152,50 184,50 177,22 159,22"/></svg>
+   <div class="ctl"><span id="accentLbl" class="title">Strong beat 1</span>
+    <span class="switch"><button class="track" id="accent" role="switch" aria-labelledby="accentLbl" aria-describedby="accentHint" aria-checked="false"><span class="knob"></span></button></span></div>
+   <p class="hint" id="accentHint">Full flash on the first beat of each bar, softer on beats 2, 3 and 4.</p>
+  </div>
+  <div class="card">
+   <svg viewBox="0 0 200 54" aria-hidden="true"><circle cx="100" cy="27" r="21" fill="none" class="ring" stroke-width="8"/><path d="M100 6 A21 21 0 0 1 121 27" fill="none" class="arcA" stroke-width="8"/><path d="M121 27 A21 21 0 0 1 100 48" fill="none" class="arcB" stroke-width="8"/></svg>
+   <div class="ctl"><label for="barShift" class="title">Turn the colors</label>
+    <select id="barShift" aria-describedby="barHint"><option value="0">Never</option><option value="4">Every 4 bars</option><option value="8">Every 8 bars</option></select></div>
+   <p class="hint" id="barHint">Both colors step around the wheel together, so a long song keeps changing.</p>
+  </div>
+  <div class="card">
+   <svg viewBox="0 0 200 54" aria-hidden="true"><polyline class="curve" points="4,24 40,24 58,44 118,40 144,36 154,8 168,18 196,24" fill="none" stroke-width="3" stroke-linejoin="round"/><circle class="burst" cx="154" cy="8" r="5"/></svg>
+   <div class="ctl"><span id="dropsLbl" class="title">Build-ups and drops</span>
+    <span class="switch"><button class="track" id="drops" role="switch" aria-labelledby="dropsLbl" aria-describedby="dropsHint" aria-checked="false"><span class="knob"></span></button></span></div>
+   <p class="hint" id="dropsHint">Lights dim when the drums go away, then burst when the beat comes back.</p>
+  </div>
  </div>
  <div id="tempoColors">
  <h2>How colors change</h2>
@@ -136,6 +190,13 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
  </div>
  <p class="hint">BlackHole 2ch plays your Mac's own sound to Temponome (recommended). Choose the microphone to listen to a speaker in the room.</p>
  <h2>Play through Temponome</h2>
+ <div class="flow" id="flow" aria-hidden="true">
+  <div class="node"><svg viewBox="0 0 34 28"><rect x="3" y="2" width="28" height="18" rx="2"/><line x1="0" y1="25" x2="34" y2="25"/></svg><b>Your Mac</b><small>plays into BlackHole</small></div>
+  <svg class="arrow" viewBox="0 0 38 14"><line x1="2" y1="7" x2="32" y2="7"/><polyline points="26,2 34,7 26,12"/></svg>
+  <div class="node mid"><svg viewBox="0 0 26 30"><polygon class="lamp" points="2,25 24,25 18,3 8,3"/><line class="arm" x1="13" y1="24" x2="16" y2="6"/></svg><b>Temponome</b><small id="flowMid">hears it early</small></div>
+  <svg class="arrow" viewBox="0 0 38 14"><line x1="2" y1="7" x2="32" y2="7"/><polyline points="26,2 34,7 26,12"/></svg>
+  <div class="node"><svg viewBox="0 0 26 30"><rect x="4" y="2" width="18" height="26" rx="3"/><circle cx="13" cy="18" r="5"/><circle cx="13" cy="8" r="1.5"/></svg><b>Speaker</b><small>you hear it here</small></div>
+ </div>
  <div class="group">
   <div class="row"><span class="grow" id="ptLbl">Play music through Temponome<br><span class="hint" style="margin:0">Your Mac's sound goes to BlackHole and Temponome plays it to your speaker a moment later, so the lights land exactly on the beat. Videos will be slightly out of sync.</span></span>
    <span class="switch"><button class="track" id="passthru" role="switch" aria-labelledby="ptLbl" aria-checked="false"><span class="knob"></span></button></span></div>

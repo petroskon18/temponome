@@ -41,14 +41,16 @@ anything they must do on their Mac, and keep the double-click launcher working.
 - `temponome.py`: engine and local web server (Engine, BeatTracker, Tapo/Govee control,
   finder, calibration API, `status_text()` plain-words status, `apply_config()` which
   restarts the engine when the light list changes while playing, `make_server(port)`).
-- `ui/`: the pages, served from disk. `main.html` = the analog "deck" (2026-11-24 redesign,
-  spec `docs/superpowers/specs/2026-11-24-analog-deck-design.md`): cream VU meter (80–160 BPM
-  over ±40°, needle rests at the tempo and kicks +9° on each beat), one lamp per light from
-  `/api/state` `lamps`, play/stop key, together/chase flip toggle, brightness as 10 amber
-  cells over a hidden range input, pulse fader, nameplate, status strip. Owner rule: **no
+- `ui/`: the pages, served from disk. `main.html` = the "Stage of lamps" (2026-11-26 redesign, owner
+  picked mockup C of https://claude.ai/artifact/HR9YHuV126qx3V4HjBj2Z4): one lamp shade per light
+  (the logo's shape), filled from the bottom to the bulb's brightness in its live color, with what
+  it reacts to under its name (`/api/state` `lamps` carry `sound`); tempo + the logo whose arm
+  ticks on each beat at the top; play, brightness, pulse and Together/Chase (shown only with 2+
+  lights on the beat) at the bottom; status strip. Colors come from the logo (deck.css: cream
+  shade, golden glow, brown arm; light = warm paper, dark = near-black). Owner rule: **no
   caption may touch or cross a line**; `settings.html` + `settings.js` = Settings
   window (Lights, Colors, Sound, Timing tabs; finder and webcam calibration live here);
-  `deck.css` (analog panel tokens: dark = black panel, light = silver; accent #e2531b);
+  `deck.css` (shared color tokens from the logo; accent = brown #6b4f2a in light mode, gold #ffd27a in dark);
   `common.js` (`T.api`, `T.saveCfg`, `T.openSettings`).
 - `app/temponome_app.py`: the Mac app shell. Picks a free port (8765 if free), starts the
   server and opens native WebKit windows with pywebview; Settings is a second window;

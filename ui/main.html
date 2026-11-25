@@ -3,65 +3,41 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/ui/deck.css">
 <style>
-/* An analog studio device: VU meter + one lamp per light on the left, controls on the right.
+/* "Stage of lamps": one lamp shade per light, filled and colored the way the bulb is right now,
+   like the bars of an equalizer. Shapes come from the logo (a metronome-shaped table lamp).
    Rule: no caption may touch or cross a line. The window always fits; nothing scrolls. */
 body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-.deck { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 1px 220px; gap: 0 18px; padding: 6px 24px 14px; align-items: start; }
-.divider { align-self: stretch; background: var(--line); }
-.screw { position: absolute; width: 9px; height: 9px; border-radius: 50%; background: var(--screw); border: 1px solid var(--line); }
-.screw::after { content: ""; position: absolute; left: 1px; right: 1px; top: 3px; height: 1px; background: var(--track); }
-.screw.tl { left: 8px; top: 8px; } .screw.tr { right: 8px; top: 8px; } .screw.bl { left: 8px; bottom: 8px; } .screw.br { right: 8px; bottom: 8px; }
+.top { flex: none; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 24px 4px; }
+.tempo { display: flex; align-items: baseline; gap: 8px; }
+#bpmNum { font-size: 30px; font-weight: 700; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+#lockTxt { font-size: 13px; color: var(--mut); }
+.logo { width: 22px; height: 26px; flex: none; align-self: center; }
 
-/* left: meter + lamps */
-.left { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.meter { width: 100%; max-width: 330px; max-height: calc(100vh - 170px); aspect-ratio: 300 / 190; }
-.meter svg { width: 100%; height: 100%; display: block; }
-#needle { transform-box: view-box; transform-origin: 150px 170px; transform: rotate(-48deg); transition: transform .45s cubic-bezier(.3,.7,.4,1); }
-#needle.kick { transition-duration: .07s; }
-.lamps { display: flex; flex-wrap: wrap; gap: 10px 18px; max-height: 96px; overflow: hidden; }
-.lamp { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
-.lamp .bezel { width: 22px; height: 22px; border-radius: 50%; background: var(--well); display: grid; place-items: center; flex: none; }
-.lamp .bulb { width: 14px; height: 14px; border-radius: 50%; background: #444; opacity: .25; transition: opacity .08s linear; }
-.lamp .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+/* the stage: lamps share the width; each shade keeps its shape and grows with the window */
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; gap: clamp(10px, 3vw, 28px); padding: 6px 24px 0; }
+.lamp { flex: 1 1 0; max-width: 150px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.lamp svg { flex: 1; min-height: 0; width: 100%; display: block; }
+.lamp .fill { transition: y .08s linear, height .08s linear, fill .12s linear; }
+.lamp .name { max-width: 100%; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lamp .does { max-width: 100%; font-size: 12px; color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lamp.off .name { color: var(--mut); }
-#empty { display: none; }
-#empty p { margin: 0 0 8px; font-size: 13px; }
-.noLights #empty { display: block; } .noLights .needsLights { display: none !important; }
+#empty { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+#empty p { margin: 0; font-size: 14px; }
+.noLights #empty { display: flex; } .noLights .needsLights { display: none !important; }
 
-/* right: controls */
-.right { display: flex; flex-direction: column; gap: clamp(8px, 2.6vh, 16px); }
-.keys { display: grid; grid-template-columns: 100px 1fr; gap: 0 16px; }
-.keys .caption { margin-top: 5px; }
-#play { width: 100px; height: 60px; padding: 0; border: 0; border-radius: 6px; background: var(--accent-fill); color: #fff;
-  box-shadow: inset 0 -7px 0 rgba(0,0,0,.18); display: grid; place-items: center; }
+/* controls: play, brightness, pulse, together/chase */
+.controls { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding: 14px 24px 12px; }
+#play { width: 54px; height: 54px; padding: 0; border: 0; border-radius: 50%; background: var(--accent-fill); color: var(--on-accent);
+  display: grid; place-items: center; flex: none; }
 #play svg { width: 22px; height: 22px; }
-#play:active { transform: translateY(1px); box-shadow: inset 0 -4px 0 rgba(0,0,0,.18); }
-.mode { height: 60px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); display: flex; align-items: center; gap: 10px; padding: 0 10px; }
-.flip { width: 18px; height: 44px; border-radius: 9px; background: var(--well); position: relative; flex: none; padding: 0; border: 0; min-height: 0; }
-.flip::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--knob); transition: top .12s; }
-.flip.chase::after { top: 28px; }
-.mode .opts { display: flex; flex-direction: column; justify-content: space-between; height: 44px; }
-.mode .opts button { border: 0; background: none; padding: 0; min-height: 0; font-size: 11px; color: var(--mut); text-align: left; line-height: 14px; }
-.mode .opts button[aria-checked=true] { color: var(--ink); }
-.row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-.row .val { font-size: 12px; }
-.cells { position: relative; height: 28px; border-radius: 4px; background: var(--well); display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; padding: 6px; }
-.cells i { border-radius: 1.5px; background: var(--amber-off); }
-.cells i.on { background: var(--amber); }
-.cells input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; margin: 0; }
-.cells:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
-.fader input[type=range]::-webkit-slider-runnable-track { height: 6px; background: var(--well); border-radius: 3px; }
-.fader input[type=range]::-webkit-slider-thumb { width: 24px; height: 22px; border-radius: 3px; margin-top: -8px; background: var(--knob); border: 1px solid var(--knob-line);
-  background-image: linear-gradient(90deg, transparent 11px, var(--knob-line) 11px, var(--knob-line) 12px, transparent 12px); }
-.ticks { display: flex; justify-content: space-between; height: 6px; margin: 2px 11px 0; }
-.ticks i { width: 1px; background: var(--track); }
-.ticks i:nth-child(even) { height: 4px; }
-.ends { display: flex; justify-content: space-between; margin-top: 4px; }
-.plate { height: 34px; border-radius: 5px; background: var(--panel); border: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
-.plate .brand { font-size: 12px; letter-spacing: .08em; }
-.plate .pwr { display: flex; align-items: center; gap: 8px; }
-.led { width: 8px; height: 8px; border-radius: 50%; background: var(--amber-off); }
-.led.on { background: var(--ok); }
+.slider { flex: 1 1 130px; min-width: 120px; }
+.slider .row { display: flex; justify-content: space-between; align-items: baseline; }
+.slider .row span:last-child { font-size: 12px; color: var(--mut); }
+.slider label { font-size: 12px; color: var(--cap); }
+.fill-range { --v: 50%; }
+input.fill-range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--amber) var(--v), var(--amber-off) var(--v)); }
+input.fill-range::-webkit-slider-thumb { margin-top: -6px; }
 
 /* status strip */
 .bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 18px 9px 20px; border-top: 1px solid var(--line); background: var(--panel); }
@@ -69,80 +45,36 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .dot.ok { background: var(--ok); } .dot.wait { background: var(--wait); } .dot.warn { background: var(--warn); } .dot.error { background: var(--err); }
 #status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-@media (max-height: 400px) { .plate { display: none; } }
-@media (max-width: 500px) { .deck { grid-template-columns: minmax(0, 1fr) 1px 190px; gap: 0 12px; padding: 6px 24px 14px; } .keys { grid-template-columns: 84px 1fr; gap: 0 10px; } #play { width: 84px; } }
-@media (prefers-reduced-motion: reduce) { #needle, .lamp .bulb { transition: none; } }
+@media (max-height: 380px) { .lamp .does { display: none; } #bpmNum { font-size: 24px; } }
+@media (prefers-reduced-motion: reduce) { .lamp .fill { transition: none; } }
 </style></head>
 <body>
 <div class="titlebar pywebview-drag-region" aria-hidden="true"></div>
-<main class="deck" id="deck">
- <span class="screw tl" aria-hidden="true"></span><span class="screw tr" aria-hidden="true"></span>
- <span class="screw bl" aria-hidden="true"></span><span class="screw br" aria-hidden="true"></span>
+<header class="top">
+ <div class="tempo" role="img" id="meter" aria-label="Tempo not running">
+  <svg class="logo" viewBox="0 0 28 32" aria-hidden="true"><polygon points="3,26 25,26 19,3 9,3" fill="var(--cream)" stroke="var(--line)"/><line id="arm" x1="14" y1="25" x2="14" y2="6" stroke="#6b4f2a" stroke-width="2.5" stroke-linecap="round" style="transform-origin:14px 25px;transition:transform .12s"/><rect x="12" y="27" width="4" height="4" fill="#8e8e93"/></svg>
+  <span id="bpmNum" aria-hidden="true">—</span><span id="lockTxt" aria-hidden="true">stopped</span>
+ </div>
+</header>
 
- <section class="left">
-  <div class="meter" role="img" id="meter" aria-label="Tempo not running">
-   <svg viewBox="0 0 300 190" aria-hidden="true">
-    <rect width="300" height="190" rx="10" fill="var(--well)"/>
-    <rect x="8" y="8" width="284" height="174" rx="6" fill="var(--cream)"/>
-    <path d="M58.1 92.9 A120 120 0 0 1 241.9 92.9" fill="none" stroke="var(--scale)" stroke-width="1.5"/>
-    <path d="M210 66.1 A120 120 0 0 1 241.9 92.9" fill="none" stroke="var(--zone)" stroke-width="5"/>
-    <g stroke="var(--scale)" stroke-width="1.5">
-     <line x1="77.2" y1="85.8" x2="72.9" y2="78.1"/><line x1="111.7" y1="64.8" x2="109" y2="57.2"/>
-     <line x1="150" y1="58" x2="150" y2="50"/><line x1="188.3" y1="64.8" x2="191" y2="57.2"/>
-     <line x1="222.8" y1="85.8" x2="227.1" y2="78.1"/>
-    </g>
-    <g font-size="11" fill="var(--scale)" text-anchor="middle">
-     <text x="58.7" y="65">80</text><text x="101.4" y="40">100</text><text x="150" y="32">120</text>
-     <text x="198.6" y="40">140</text><text x="241.3" y="65">160</text>
-    </g>
-    <line id="needle" x1="150" y1="170" x2="150" y2="60" stroke="#1d1d1f" stroke-width="1.8" stroke-linecap="round"/>
-    <rect x="8" y="152" width="284" height="30" fill="var(--cream-2)"/>
-    <rect x="8" y="176" width="284" height="6" rx="0" fill="var(--cream-2)"/>
-    <circle cx="150" cy="170" r="9" fill="#1d1d1f"/>
-    <text id="bpmNum" x="22" y="172" font-size="13" font-weight="600" fill="var(--scale)">— bpm</text>
-    <text id="lockTxt" x="278" y="172" text-anchor="end" font-size="11" fill="var(--scale)">stopped</text>
-   </svg>
-  </div>
+<main class="stage needsLights" id="lamps" aria-label="Your lights"></main>
+<div id="empty"><p>Find your lights to get started</p><button id="findLights">Find my lights</button></div>
 
-  <div>
-   <div class="caption" style="margin-bottom:8px">lights</div>
-   <div class="lamps needsLights" id="lamps" aria-label="Your lights"></div>
-   <div id="empty"><p>Find your lights to get started</p><button id="findLights">Find my lights</button></div>
-  </div>
- </section>
-
- <div class="divider" aria-hidden="true"></div>
-
- <section class="right needsLights">
-  <div class="keys">
-   <button id="play" aria-label="Play"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
-   <div class="mode" role="radiogroup" aria-label="How the lights pulse" id="multiBox">
-    <button class="flip" id="flip" tabindex="-1" aria-hidden="true"></button>
-    <div class="opts">
-     <button role="radio" id="mSync" aria-checked="true" title="All lights pulse on every beat">together</button>
-     <button role="radio" id="mChase" aria-checked="false" title="Lights take turns, one per beat">chase</button>
-    </div>
-   </div>
-   <div class="caption" id="playCap">play</div>
-   <div class="caption">mode</div>
-  </div>
-
-  <div>
-   <div class="row"><label for="maxB" class="caption">brightness</label><span class="val" id="maxBv"></span></div>
-   <div class="cells" id="cells"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-    <input type="range" id="maxB" min="10" max="100" step="10"></div>
-  </div>
-
-  <div class="fader">
-   <label for="smooth" class="caption" style="display:block;margin-bottom:4px">pulse</label>
-   <input type="range" id="smooth" min="0" max="1" step="0.05" aria-describedby="pulseEnds">
-   <div class="ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-   <div class="ends caption" id="pulseEnds"><span>snappy</span><span>smooth</span></div>
-  </div>
-
-  <div class="plate" aria-hidden="true"><span class="brand">temponome</span><span class="pwr"><span class="caption">power</span><span class="led" id="pwr"></span></span></div>
- </section>
-</main>
+<section class="controls needsLights" aria-label="Controls">
+ <button id="play" aria-label="Play"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
+ <div class="slider">
+  <div class="row"><label for="maxB">Brightness</label><span id="maxBv"></span></div>
+  <input type="range" class="fill-range" id="maxB" min="10" max="100" step="10">
+ </div>
+ <div class="slider">
+  <div class="row"><label for="smooth">Pulse</label><span id="smoothV"></span></div>
+  <input type="range" class="fill-range" id="smooth" min="0" max="1" step="0.05">
+ </div>
+ <div class="seg" role="radiogroup" aria-label="How beat lights share the beats" id="multiBox">
+  <button role="radio" id="mSync" aria-checked="true" title="All lights on the beat flash together">Together</button>
+  <button role="radio" id="mChase" aria-checked="false" title="Lights on the beat take turns, one per beat">Chase</button>
+ </div>
+</section>
 
 <footer class="bar">
  <span class="dot" id="dot"></span>
@@ -155,84 +87,98 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 <script src="/ui/common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-let st = null, lastBeats = null, loaded = false, multiTouched = 0, saveFailedAt = 0, kickUntil = 0;
+const NS = 'http://www.w3.org/2000/svg';
+const DOES = { beat: 'On the beat', kick: 'Kick drum', snare: 'Snare', hats: 'Hi-hats',
+               low: 'Bass bar', mid: 'Middle bar', high: 'Treble bar', pitch: 'Pitch to color' };
+// the lamp shade from the logo; the colored part rises from the bottom with the bulb's brightness
+const SHADE = '8,114 92,114 70,8 30,8', TOP = 8, BOT = 114;
+let st = null, lastBeats = null, loaded = false, multiTouched = 0, saveFailedAt = 0, tick = false;
 const reduce = matchMedia('(prefers-reduced-motion: reduce)');
 
-// meter scale: 80 bpm at -40°, 160 bpm at +40°; resting off to the left when stopped
-const needleAngle = bpm => bpm ? Math.max(-46, Math.min(46, (bpm - 120))) : -48;
-function setNeedle(a, kick) {
-  const n = $('needle');
-  n.classList.toggle('kick', !!kick);
-  n.style.transform = `rotate(${a}deg)`;
-}
-
 function lampList() {
+  const devs = st.cfg.devices.filter(d => d.ip);
   if (st.running && st.lamps && st.lamps.length) return st.lamps;
-  return st.cfg.devices.filter(d => d.ip).map(d => ({ name: d.name || d.ip, b: 0, hex: null, ok: true }));
+  return devs.map(d => ({ name: d.name || d.ip, b: 0, hex: null, ok: true, sound: d.sound || 'beat' }));
+}
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function makeLamp(i) {
+  const box = document.createElement('div'); box.className = 'lamp';
+  const svg = el('svg', { viewBox: '0 0 100 124', preserveAspectRatio: 'xMidYMax meet', 'aria-hidden': 'true' }, box);
+  const clip = el('clipPath', { id: 'shade' + i }, el('defs', {}, svg));
+  el('polygon', { points: SHADE }, clip);
+  el('polygon', { points: SHADE, fill: 'var(--shade-off)' }, svg);
+  el('rect', { class: 'fill', x: 0, width: 100, y: BOT, height: 0, 'clip-path': `url(#shade${i})` }, svg);
+  el('ellipse', { class: 'glow', cx: 50, cy: 119, rx: 44, ry: 4, opacity: 0 }, svg);
+  const name = document.createElement('span'); name.className = 'name';
+  const does = document.createElement('span'); does.className = 'does';
+  box.append(name, does);
+  return box;
 }
 function renderLamps() {
   const box = $('lamps'), list = lampList();
   if (box.children.length !== list.length) {
     box.innerHTML = '';
-    for (const _ of list) {
-      const el = document.createElement('div'); el.className = 'lamp';
-      el.innerHTML = '<span class="bezel"><span class="bulb"></span></span><span class="name"></span>';
-      box.appendChild(el);
-    }
+    list.forEach((_, i) => box.appendChild(makeLamp(i)));
   }
   list.forEach((l, i) => {
-    const el = box.children[i], bulb = el.querySelector('.bulb');
-    el.querySelector('.name').textContent = l.name;
-    const lit = st.running && l.hex && l.ok;
-    el.classList.toggle('off', !lit);
-    el.title = !l.ok ? `${l.name} isn't answering` : '';
-    bulb.style.background = lit ? l.hex : '#555';
-    bulb.style.opacity = lit ? (0.25 + 0.75 * l.b / 100).toFixed(2) : '.25';
+    const e = box.children[i], lit = st.running && l.hex && l.ok;
+    const lvl = lit ? Math.max(0.06, l.b / 100) : 0;
+    const fill = e.querySelector('.fill'), glow = e.querySelector('.glow');
+    const h = (BOT - TOP) * lvl;
+    fill.setAttribute('y', (BOT - h).toFixed(1)); fill.setAttribute('height', h.toFixed(1));
+    fill.setAttribute('fill', lit ? l.hex : 'transparent');
+    glow.setAttribute('fill', lit ? l.hex : 'transparent'); glow.setAttribute('opacity', (lvl * 0.45).toFixed(2));
+    e.querySelector('.name').textContent = l.name;
+    e.querySelector('.does').textContent = DOES[l.sound] || DOES.beat;
+    e.classList.toggle('off', !lit);
+    e.title = !l.ok ? `${l.name} isn't answering` : '';
   });
 }
 
 function render() {
-  const running = st.running, hasLights = st.cfg.devices.some(d => d.ip);
-  document.body.classList.toggle('noLights', !hasLights);
+  const running = st.running, devs = st.cfg.devices.filter(d => d.ip);
+  document.body.classList.toggle('noLights', !devs.length);
   $('play').setAttribute('aria-label', running ? 'Stop' : 'Play');
-  $('playCap').textContent = running ? 'stop' : 'play';
   $('playIcon').setAttribute('d', running ? 'M6.5 6.5h11v11h-11z' : 'M8 5v14l11-7z');
-  $('pwr').classList.toggle('on', running);
   const bpm = running && st.bpm ? Math.round(st.bpm) : 0;
-  $('bpmNum').textContent = (bpm || '—') + ' bpm';
+  $('bpmNum').textContent = bpm ? bpm + ' BPM' : '—';
   $('lockTxt').textContent = !running ? 'stopped' : st.locked ? 'on the beat' : 'finding the beat';
   $('meter').setAttribute('aria-label', bpm ? `Tempo ${bpm} BPM` : 'Tempo not running');
-  const beat = lastBeats !== null && st.beats !== lastBeats && running && !reduce.matches;
+  // the logo's metronome arm ticks from side to side on each beat
+  if (lastBeats !== null && st.beats !== lastBeats && running && !reduce.matches) tick = !tick;
   lastBeats = st.beats;
-  if (beat) {                       // the needle kicks a little on each beat, then settles at the tempo
-    setNeedle(needleAngle(bpm) + 9, true);
-    kickUntil = Date.now() + 80;
-    setTimeout(() => setNeedle(needleAngle(bpm), false), 80);
-  } else if (Date.now() > kickUntil) setNeedle(needleAngle(bpm), false);
+  $('arm').style.transform = running ? `rotate(${tick ? 18 : -18}deg)` : 'rotate(0deg)';
   renderLamps();
 
   const saveFailed = Date.now() - saveFailedAt < 4000;
   $('status').textContent = saveFailed ? "Couldn't save your last change. Try again." : st.status;
   $('status').title = st.error || '';
   $('dot').className = 'dot ' + (saveFailed ? 'warn' : st.status_level);
-  const n = st.cfg.devices.filter(d => d.ip).length;
-  $('multiBox').style.visibility = n < 2 ? 'hidden' : '';
+  // Together / Chase only matters for two or more lights that follow the beat
+  const beatLights = devs.filter(d => (d.sound || 'beat') === 'beat').length;
+  $('multiBox').hidden = beatLights < 2;
   if (Date.now() - multiTouched > 800) showMulti(st.cfg.multi === 'chase');
   if (!loaded) { $('maxB').value = st.cfg.maxB; $('smooth').value = st.cfg.smooth; loaded = true; }
-  showBrightness();
-  const sm = +$('smooth').value;
-  $('smooth').setAttribute('aria-valuetext', sm < 0.34 ? 'Snappy' : sm > 0.66 ? 'Smooth' : 'Medium');
+  showSliders();
 }
-function showBrightness() {
-  const v = +$('maxB').value, on = Math.round(v / 10);
-  [...$('cells').querySelectorAll('i')].forEach((c, i) => c.classList.toggle('on', i < on));
+function showSliders() {
+  const v = +$('maxB').value, sm = +$('smooth').value;
   $('maxBv').textContent = v + '%';
   $('maxB').setAttribute('aria-valuetext', v + ' percent');
+  $('maxB').style.setProperty('--v', ((v - 10) / 90 * 100) + '%');
+  const word = sm < 0.34 ? 'snappy' : sm > 0.66 ? 'smooth' : 'medium';
+  $('smoothV').textContent = word;
+  $('smooth').setAttribute('aria-valuetext', word);
+  $('smooth').style.setProperty('--v', (sm * 100) + '%');
 }
 function showMulti(chase) {
   $('mSync').setAttribute('aria-checked', !chase); $('mChase').setAttribute('aria-checked', chase);
   $('mSync').tabIndex = chase ? -1 : 0; $('mChase').tabIndex = chase ? 0 : -1;
-  $('flip').classList.toggle('chase', chase);
 }
 function setMulti(chase) {
   multiTouched = Date.now(); showMulti(chase);
@@ -248,11 +194,10 @@ async function togglePlay() {
 }
 
 $('play').onclick = togglePlay;
-$('maxB').oninput = () => { showBrightness(); T.saveCfg({ maxB: +$('maxB').value }); };
-$('smooth').oninput = () => T.saveCfg({ smooth: +$('smooth').value });
+$('maxB').oninput = () => { showSliders(); T.saveCfg({ maxB: +$('maxB').value }); };
+$('smooth').oninput = () => { showSliders(); T.saveCfg({ smooth: +$('smooth').value }); };
 $('mSync').onclick = () => setMulti(false);
 $('mChase').onclick = () => setMulti(true);
-$('flip').onclick = () => setMulti($('mSync').getAttribute('aria-checked') === 'true');
 $('multiBox').onkeydown = e => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
     e.preventDefault(); const chase = $('mSync').getAttribute('aria-checked') === 'true';

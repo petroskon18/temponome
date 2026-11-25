@@ -32,6 +32,46 @@ window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
 window.showTab = showTab;   // the app shell calls this when Settings is opened on a given tab
 
 // ---------- lights ----------
+// what a light reacts to: buttons in groups instead of one long menu
+const REACT = [
+  { label: null, opts: [['beat', 'On the beat']] },
+  { label: 'Drum', opts: [['kick', 'Kick'], ['snare', 'Snare'], ['hats', 'Hi-hats']] },
+  { label: 'Bar', opts: [['low', 'Bass'], ['mid', 'Middle'], ['high', 'Treble']] },
+  { label: null, opts: [['pitch', 'Pitch to color']] },
+];
+const REACT_FULL = { beat: 'on the beat', kick: 'the kick drum', snare: 'the snare', hats: 'the hi-hats',
+  low: 'a bass bar', mid: 'a middle bar', high: 'a treble bar', pitch: 'pitch to color' };
+function reactPicker(d, changed) {
+  const box = document.createElement('div'); box.className = 'react';
+  box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', `What ${lname(d)} reacts to`);
+  const buttons = [];
+  const show = () => buttons.forEach(b => {
+    const on = b.dataset.v === (d.sound || 'beat');
+    b.setAttribute('aria-checked', on); b.tabIndex = on ? 0 : -1;
+  });
+  const pick = v => { d.sound = v; show(); changed(); saveDevices(); };
+  for (const g of REACT) {
+    const grp = document.createElement('div'); grp.className = g.label ? 'chips' : 'chips solo';
+    if (g.label) { const l = document.createElement('span'); l.className = 'chiplbl'; l.textContent = g.label; l.setAttribute('aria-hidden', 'true'); grp.appendChild(l); }
+    for (const [v, text] of g.opts) {
+      const b = document.createElement('button'); b.textContent = text; b.dataset.v = v;
+      b.setAttribute('role', 'radio'); b.setAttribute('aria-label', REACT_FULL[v]);
+      b.onclick = () => pick(v);
+      buttons.push(b); grp.appendChild(b);
+    }
+    box.appendChild(grp);
+  }
+  box.onkeydown = e => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const i = buttons.findIndex(b => b.dataset.v === (d.sound || 'beat'));
+    const n = buttons[(i + step + buttons.length) % buttons.length];
+    pick(n.dataset.v); n.focus();
+  };
+  show();
+  return box;
+}
 function renderDevs() {
   const box = $('devList'); box.innerHTML = '';
   if (!lights().length) {
@@ -46,23 +86,20 @@ function renderDevs() {
     const sub = document.createElement('div'); sub.className = 'hint'; sub.style.margin = 0;
     sub.textContent = `${MODEL_NAME(d.model)} · ${d.ip}` + (d.calib == null ? ' · timing not measured' : ' · timing measured');
     info.append(title, sub);
-    const sound = document.createElement('select');
-    sound.setAttribute('aria-label', `What ${lname(d)} reacts to`);
-    sound.innerHTML = '<option value="beat">On the beat</option><option value="kick">Kick drum</option><option value="snare">Snare</option><option value="hats">Hi-hats</option>'
-      + '<optgroup label="Sound bars"><option value="low">Bass level</option><option value="mid">Middle level</option><option value="high">Treble level</option></optgroup>'
-      + '<option value="pitch">Pitch to color</option>';
-    sound.value = d.sound || 'beat';
-    sound.onchange = () => { d.sound = sound.value; color.hidden = cfg.pulse === 'color' || d.sound === 'pitch'; saveDevices(); };
     const color = document.createElement('select');
     color.setAttribute('aria-label', `Color for ${lname(d)}`);
     color.innerHTML = '<option value="blend">Tempo blend</option><option value="A">Always color A</option><option value="B">Always color B</option>';
     color.value = d.color; color.onchange = () => { d.color = color.value; saveDevices(); };
     // with a color pulse every light goes calm -> energetic; pitch to color picks its own color
     color.hidden = cfg.pulse === 'color' || d.sound === 'pitch';
+    const react = reactPicker(d, () => { color.hidden = cfg.pulse === 'color' || d.sound === 'pitch'; });
+    const shade = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    shade.setAttribute('viewBox', '0 0 46 46'); shade.setAttribute('aria-hidden', 'true'); shade.classList.add('shade');
+    shade.innerHTML = '<polygon points="4,38 42,38 33,6 13,6"/><ellipse cx="23" cy="42" rx="18" ry="3"/>';
     const rm = document.createElement('button'); rm.textContent = 'Remove';
     rm.setAttribute('aria-label', `Remove ${lname(d)}`);
     rm.onclick = () => { cfg.devices.splice(i, 1); saveDevices(); renderDevs(); renderFinder(); calSummary(); };
-    row.append(info, sound, color, rm);
+    row.append(shade, info, color, rm, react);
     box.appendChild(row);
   });
   renderOffsets();
@@ -287,9 +324,19 @@ for (const id of ['accent', 'drops']) {
   $(id).onclick = () => { const on = $(id).getAttribute('aria-checked') !== 'true'; $(id).setAttribute('aria-checked', on); cfg[id] = on; T.saveCfg({ [id]: on }); };
 }
 $('barShift').onchange = () => { cfg.bar_shift = +$('barShift').value; T.saveCfg({ bar_shift: cfg.bar_shift }); };
-document.querySelectorAll('input[name=pulse]').forEach(r => r.onchange = () => {
-  cfg.pulse = r.value; T.saveCfg({ pulse: r.value }); showMode(); renderDevs();
-});
+function showPulse() {
+  for (const id of ['pulseB', 'pulseC']) {
+    const on = $(id).dataset.v === (cfg.pulse || 'brightness');
+    $(id).setAttribute('aria-checked', on); $(id).tabIndex = on ? 0 : -1;
+  }
+}
+for (const id of ['pulseB', 'pulseC']) {
+  $(id).onclick = () => { cfg.pulse = $(id).dataset.v; T.saveCfg({ pulse: cfg.pulse }); showPulse(); showMode(); renderDevs(); };
+  $(id).onkeydown = e => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault(); const other = id === 'pulseB' ? 'pulseC' : 'pulseB'; $(other).click(); $(other).focus();
+  };
+}
 document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
   cfg.mode = r.value; T.saveCfg({ mode: r.value }); showMode();
 });
@@ -310,6 +357,8 @@ function showPass() {
   const on = !!cfg.passthru && !why;
   $('passthru').disabled = !!why;
   $('passthru').setAttribute('aria-checked', on);
+  $('flow').classList.toggle('on', on);
+  $('flowMid').textContent = st && st.pass_delay ? `hears it ${st.pass_delay.toFixed(1)} s early` : 'hears it early';
   $('ptWhy').hidden = !why; $('ptWhy').textContent = why;
   $('outDev').disabled = $('spk').disabled = !on;
   $('device').disabled = on;
@@ -523,7 +572,7 @@ async function init() {
   $('email').value = cfg.email || ''; if (cfg.has_password) $('password').placeholder = 'Saved';
   $('device').value = cfg.device;
   document.querySelector(`input[name=mode][value=${cfg.mode}]`).checked = true;
-  document.querySelector(`input[name=pulse][value=${cfg.pulse || 'brightness'}]`).checked = true;
+  showPulse();
   $('accent').setAttribute('aria-checked', !!cfg.accent); $('drops').setAttribute('aria-checked', !!cfg.drops);
   $('barShift').value = String(cfg.bar_shift || 0);
   $('lock').setAttribute('aria-checked', !!cfg.lock);

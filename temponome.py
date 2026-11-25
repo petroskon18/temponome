@@ -1434,7 +1434,7 @@ class Engine:
                     if pv and now < pv[2]:            # Settings is previewing a color: show it plainly
                         hue, sat, b = pv[0], max(1, pv[1]), max(1, min(100, int(cfg["maxB"])))
                         L.hue_now = float(hue)
-                    lamps.append({"name": L.name, "b": b, "hex": hsv_hex(hue, sat), "ok": L.fails < 3})
+                    lamps.append({"name": L.name, "b": b, "hex": hsv_hex(hue, sat), "ok": L.fails < 3, "sound": sound})
 
                     if k == 0:
                         self.bpm, self.brightness = tracker.bpm, b

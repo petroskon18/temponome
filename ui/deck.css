@@ -1,23 +1,26 @@
-/* Temponome look: a small analog studio device (dark panel, cream VU meter, amber steps).
-   Dark appearance = black panel, light appearance = brushed-silver panel. */
+/* Temponome look, from the logo (a metronome-shaped table lamp): cream shade, warm golden
+   glow, brown arm. Light appearance = warm paper, dark appearance = near-black. */
 :root {
-  --body: #d9d9d5; --panel: #e6e6e2; --line: #b8b8b3; --well: #2b2b2e; --track: #8a8a86;
-  --ink: #1d1d1f; --mut: #55555a; --cap: #4a4a4f;
-  --cream: #efe4c4; --cream-2: #e3d6b2; --scale: #3a3428; --zone: #b8402a;
-  --amber: #ffb02e; --amber-off: #3a362e; --knob: #f4f4f2; --knob-line: #77777c; --screw: #b0b0ab;
-  --accent: #e2531b; --on-accent: #ffffff;
-  --accent-fill: #c2410c;   /* darker orange behind text, so white text stays readable (4.5:1+) */
-  --ok: #2e9d57; --wait: #b07a12; --warn: #c25e00; --err: #d63b3b;
+  --body: #ebe6da; --panel: #f6f1e5; --line: #d6cdb9; --well: #2a2620; --track: #a89f8c;
+  --ink: #2a2620; --mut: #6a6254; --cap: #5e574a;
+  --cream: #f4e7c8; --cream-2: #e7dcc3; --scale: #3a3428; --zone: #b8402a;
+  --shade: #e2d6ba; --shade-off: #d9cfba;          /* an empty lamp shade on the stage */
+  --amber: #e0a43a; --amber-off: #d0c8b6; --knob: #fffaf0; --knob-line: #8a8170; --screw: #b0a893;
+  --accent: #6b4f2a; --on-accent: #f4e7c8;
+  --accent-fill: #6b4f2a;   /* the logo's brown arm behind cream text */
+  --ok: #2f8f57; --wait: #9a6a0e; --warn: #b25500; --err: #c93434;
   --focus: #0a64d8;
   --titlebar: 30px;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --body: #2a2a2f; --panel: #232327; --line: #3a3a40; --well: #141416; --track: #76767b;
-    --ink: #ececef; --mut: #a1a1a8; --cap: #9a9aa0;
-    --amber-off: #2e2a22; --knob: #d8d8dc; --knob-line: #6e6e74; --screw: #1a1a1d;
-    --ok: #4cc47a; --wait: #e0b14a; --warn: #ff9f45; --err: #ff6b6b; --focus: #4c9bff;
+    --body: #1b1a18; --panel: #24221e; --line: #34312a; --well: #121110; --track: #6e675a;
+    --ink: #efe6d4; --mut: #a59e8f; --cap: #a59e8f;
+    --shade: #2e2b26; --shade-off: #2a2723;
+    --amber: #ffd27a; --amber-off: #2e2b26; --knob: #efe6d4; --knob-line: #6e675a; --screw: #121110;
+    --accent: #ffd27a; --on-accent: #1b1a18; --accent-fill: #ffd27a;
+    --ok: #5bd18b; --wait: #e0b14a; --warn: #ff9f45; --err: #ff6b6b; --focus: #4c9bff;
   }
 }
 * { box-sizing: border-box; }
