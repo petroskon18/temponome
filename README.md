@@ -4,69 +4,114 @@
 
 <h1 align="center">Temponome</h1>
 
-<p align="center">Makes your Tapo and Govee lights pulse and change color with your music, on a Mac.</p>
+<p align="center"><b>Your lights, in time with your music.</b><br>
+A free Mac app that makes Tapo and Govee lights pulse, flash and change color to whatever you're playing.</p>
+
+<p align="center">
+  <a href="https://github.com/petroskon18/temponome/releases/latest"><b>⬇ Download for Mac</b></a>
+  &nbsp;·&nbsp; Apple silicon &nbsp;·&nbsp; Free and open source
+</p>
 
 <p align="center">
   <img src="docs/screenshots/main-dark.png" width="49%" alt="Temponome playing in dark mode: 120 BPM at the top, three lamp shades filled with each light's live color and brightness, labeled Bass bar, On the beat and Pitch to color, with a stop key, brightness and pulse sliders">
   <img src="docs/screenshots/main-light.png" width="49%" alt="The same window in light mode">
 </p>
 
-The main window is a little stage of lamps, drawn after the logo: each of your lights is a lamp shade that fills up and glows exactly as the real bulb does, with what it follows written underneath. The tempo sits at the top, next to a tiny metronome whose arm ticks on every beat.
+## What it does
 
-## Install
-1. Download **Temponome.dmg** from the [latest release](https://github.com/petroskon18/temponome/releases/latest) (Apple silicon Macs), open it and drag **Temponome** onto the **Applications** folder (choose Replace if asked).
-2. The first time: open Applications, **right-click Temponome → Open**, then Open again. (macOS asks this because the app isn't signed with an Apple developer account.)
-3. For your Mac's own sound, install **BlackHole 2ch** (free) from https://existential.audio/blackhole/. You can use the Mac's microphone instead.
+Play music on your Mac (Spotify, Apple Music, YouTube, anything) and press **Play** in Temponome. It listens, finds the beat, and your lights follow along:
 
-## Use
-- Press **Play**. Each lamp shade fills and glows the way its light does, and the tempo shows at the top.
-- **Brightness** and **Pulse** are on the main window. Everything else is in **Settings** (⌘, or the gear): find your lights, colors, sound input, and timing calibration with the camera.
-- **Stop** puts each light back the way it looked before you pressed Play.
-- Your lights, colors and timing from the old version carry over automatically. Settings live in `~/Library/Application Support/Temponome/`.
+- 💡 **Flash on every beat**, brighter or in a new color.
+- 🥁 **Follow one drum.** One lamp thumps with the kick, another flickers with the hi-hats.
+- 📊 **Work like an equalizer.** Three lights become bass, middle and treble bars.
+- 🌈 **Turn the music into color.** Red for deep bass, green for voices and guitars, blue for cymbals.
+- 🎯 **Land exactly on the beat**, even on wireless speakers, with a quick camera calibration.
 
-## Ways the lights can react
+The window is a little stage of lamps: each of your lights is drawn as a lamp shade that glows just like the real one, and the tempo ticks along at the top.
 
-- **Brightness or color.** In Settings → Colors, choose what each beat changes. *Brightness* flashes the lights brighter. *Color* keeps them at a steady brightness and makes them jump from your calm color to your energetic one on every beat, then fade back.
-- **One drum per light.** In Settings → Lights, each light can follow the beat, or just one drum: the **kick**, the **snare** or the **hi-hats**. For example, one lamp can thump with the kick while another flickers with the hi-hats. The snare choice may also catch guitar or voice, which sit in the same range. Drums land best with *Play music through Temponome* on (below).
-- **Sound bars.** In Settings → Lights, set one light to **Bass level**, another to **Middle level** and a third to **Treble level**. Each grows brighter as its part of the sound gets louder, so together they work like the bars of an equalizer.
-- **Pitch to color.** A light set to **Pitch to color** turns red when the bass takes over, green for voices and guitars, and blue for cymbals, and its brightness follows the loudness.
-- **Together or Chase.** On the main window, lights set to *On the beat* can flash together or take turns. The switch shows when two or more lights follow the beat.
-- **Extras** (Settings → Colors):
-  - **Stronger flash on the first beat of each bar.** Beat 1 flashes full and beats 2–4 flash softer, so you can feel where each bar starts.
-  - **Turn the colors around the wheel.** Every 4 or 8 bars, both of your colors move a step around the color wheel, so a long song keeps changing.
-  - **Build-ups and drops.** When the drums go away (a breakdown), the lights dim and rise with the music. When the beat comes back, every light bursts to full and fades slowly.
+## What you need
 
-## Lights exactly on the beat
+| | |
+|---|---|
+| **A Mac with Apple silicon** (M1 or newer) | |
+| **Lights on the same Wi-Fi** | TP-Link **Tapo** color bulbs (tested with the L530) and **Govee** lamps with *LAN Control* switched on in the Govee Home app (tested with the H6052 table lamp) |
+| **BlackHole 2ch** (free) | Lets Temponome hear your Mac's sound. Get it from [existential.audio/blackhole](https://existential.audio/blackhole/). You can use the Mac's microphone instead, but it's less precise. |
 
-Turn on **Play music through Temponome** in Settings → Sound. Temponome then plays your Mac's sound to your speaker itself, about 0.3 seconds late. Because it hears every drum hit before you do, it can make each light flash at the moment you hear the hit, instead of guessing where the next beat will be.
+## Get started
 
-- Pick a speaker, or leave it on "Same as before". Wireless speakers play late: if the lights flash before you hear the beat, raise that speaker's **Speaker delay**.
-- Your volume keys keep working.
-- **Stop** puts your speaker and its volume back. If Temponome ever quits unexpectedly, it fixes this the next time it opens.
-- Videos will be slightly out of sync while it's on, so turn it off when you watch videos.
-- It needs BlackHole 2ch. It doesn't work with the microphone, because sound in the room has already been heard.
+1. **Download** `Temponome.dmg` from the [latest release](https://github.com/petroskon18/temponome/releases/latest), open it and drag **Temponome** into **Applications**.
+2. **Open it the first time** with a right-click on Temponome → **Open**, then **Open** again. macOS asks this once because the app isn't signed with a paid Apple developer account.
+3. **Find your lights.** Open **Settings** (⌘, or the gear) → **Lights** and press **Find my lights**. Tapo bulbs need your Tapo account sign-in, which stays on your Mac.
+4. **Press Play** and put on a song.
 
-Even with it off, Temponome now keeps a steadier beat: it ignores brief jumps in the tempo and slides onto the beat instead of jumping, so there are far fewer double flashes and gaps. You can switch this off with **Smooth out tempo jumps**.
+**Brightness** and **Pulse** are right on the main window. **Stop** puts every light back the way it was before you pressed Play.
 
-## Settings
+## Make it yours
 
 | Lights | Colors | Timing |
 |---|---|---|
 | <img src="docs/screenshots/settings-lights.png" alt="Lights tab: three lights, each with grouped buttons for what it reacts to (On the beat, Drum, Bar, Pitch to color) and its color choice"> | <img src="docs/screenshots/settings-colors.png" alt="Colors tab: two picture buttons for what each beat changes, and three illustrated cards for the extras"> | <img src="docs/screenshots/settings-timing.png" alt="Timing tab: camera calibration and a fine-tune slider from Earlier to Later"> |
-| Find your lights on Wi-Fi and choose what each one reacts to: the beat, one drum, a sound bar, or pitch to color. | Choose whether a beat flashes brighter or jumps in color, switch on the extras, and pick a calm and an energetic color on the wheel. | Measure each light's delay with the Mac's camera, so flashes land on the beat. |
+| Choose what each light follows. | Pick your colors and the extras. | Line the flashes up with the beat. |
 
-| Sound |   |
+### What each light can follow
+
+| Choice | What you'll see |
 |---|---|
-| <img src="docs/screenshots/settings-sound.png" width="400" alt="Sound tab: audio input, then a small diagram from your Mac through Temponome to the speaker above the Play music through Temponome switch, speaker picker and speaker delay"> | Choose what Temponome listens to and turn on **Play music through Temponome**; the diagram shows how the sound travels. Then pick your speaker and its delay, and set how the beat is followed. |
+| **On the beat** | A flash on every beat. With two or more of these, choose on the main window whether they flash **Together** or take turns (**Chase**). |
+| **Kick, Snare or Hi-hats** | Only that drum. The snare choice can also catch guitar or voice, which sit in the same range. |
+| **Bass, Middle or Treble level** | The light grows brighter as that part of the sound gets louder, like one bar of an equalizer. |
+| **Pitch to color** | Red when the bass takes over, green for voices and guitars, blue for cymbals. Brightness follows the loudness. |
 
-## Older way to run it
-Double-click `Start Tapo Music.command` (needs Python). Don't run it at the same time as the app.
+### Colors and extras
+
+In **Settings → Colors**, choose whether each beat makes the lights **brighter** or makes them **jump from your calm color to your energetic one**. Then switch on any of these:
+
+- **Stronger first beat.** Beat 1 of each bar flashes full and the others softer, so you can feel where each bar starts.
+- **Turn the colors around the wheel.** Every 4 or 8 bars both colors move a step, so a long song keeps changing.
+- **Build-ups and drops.** When the drums drop out the lights dim and rise with the music, then burst to full when the beat comes back.
+
+## Lights exactly on the beat
+
+<img src="docs/screenshots/settings-sound.png" width="360" align="right" alt="Sound tab: audio input, then a small diagram from your Mac through Temponome to the speaker above the Play music through Temponome switch, speaker picker and speaker delay">
+
+Normally Temponome has to *guess* when the next beat will land. Turn on **Play music through Temponome** (Settings → Sound) and it plays your sound to the speaker itself, about a third of a second late. Because it hears every hit before you do, each flash lands at the moment you hear it.
+
+- Pick your speaker, or leave it on *Same as before*.
+- Wireless speakers play late. If the lights flash before you hear the beat, raise that speaker's **Speaker delay**.
+- Your volume keys keep working, and **Stop** puts your speaker back.
+- Videos will be slightly out of sync while it's on, so switch it off for movies.
+- It needs BlackHole (not the microphone).
+
+Every light also has its own small delay. **Settings → Timing** measures it with your Mac's camera, so flashes don't trail behind the music.
+
+<br clear="right">
+
+## Questions
+
+**macOS says the app "can't be opened" or is from an unidentified developer.**
+Right-click the app → **Open** → **Open**. You only need to do this once.
+
+**My Govee lamp isn't found.**
+In the Govee Home app, open the lamp's settings and switch on **LAN Control**. The lamp and the Mac must be on the same Wi-Fi.
+
+**The lights react, but not to my music.**
+In **Settings → Sound**, choose **BlackHole 2ch** as the input. If your Mac's sound doesn't reach BlackHole, turn on **Play music through Temponome**, which sets this up for you.
+
+**There are double flashes or gaps.**
+Temponome smooths out sudden tempo jumps by default (**Smooth out tempo jumps** in Settings → Sound). For the tightest timing, use *Play music through Temponome*.
+
+**Where are my settings kept?**
+On your Mac only, in `~/Library/Application Support/Temponome/`. Nothing is sent anywhere except to your own lights.
 
 ## For developers
-- Tests: `python3 -m unittest tests.test_temponome` and `python3 tests/simulate.py` (needs numpy, scipy).
+
+Temponome is a Python engine with a small web interface in a native window (pywebview), packaged with PyInstaller.
+
+- Run the tests: `python3 -m unittest tests.test_temponome` and `python3 tests/simulate.py` (needs numpy and scipy).
 - Build the disk image: `build/build_dmg.sh` → `dist/Temponome.dmg`.
-- Project notes for Claude Code are in `CLAUDE.md`.
+- Run without building: double-click `Start Tapo Music.command` (needs Python; don't run it at the same time as the app).
+- Project notes for Claude Code are in [`CLAUDE.md`](CLAUDE.md).
 
 ## License
 
-Temponome is free software under the GNU General Public License v3.0. See [LICENSE](LICENSE).
+Free software under the [GNU General Public License v3.0](LICENSE).
