@@ -1,6 +1,10 @@
-# Temponome
+<p align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="Temponome app icon: a metronome-shaped table lamp with a cream shade and a brown swinging arm">
+</p>
 
-Makes your Tapo and Govee lights pulse and change color with your music, on a Mac.
+<h1 align="center">Temponome</h1>
+
+<p align="center">Makes your Tapo and Govee lights pulse and change color with your music, on a Mac.</p>
 
 <p align="center">
   <img src="docs/screenshots/main-dark.png" width="49%" alt="Temponome playing in dark mode: 120 BPM at the top, three lamp shades filled with each light's live color and brightness, labeled Bass bar, On the beat and Pitch to color, with a stop key, brightness and pulse sliders">
