@@ -68,6 +68,7 @@ DEFAULTS = {
     "autostart": False,    # press Play by itself when a music app starts playing
     "music_apps": [],      # apps that count as music for autostart (filled below)
     "guide_done": False,   # the first-run guide was finished or skipped
+    "preset_last": "",     # preset last put on or saved (shown first when several match)
 }
 
 # ---------- presets ----------
@@ -155,7 +156,8 @@ def _same(a, b):
 def current_preset(cfg):
     """Name of the preset the settings match right now, or "" (custom)."""
     devs = {d["ip"]: d for d in cfg["devices"] if d["ip"]}
-    for p in cfg.get("presets") or []:
+    last = (cfg.get("preset_last") or "").lower()
+    for p in sorted(cfg.get("presets") or [], key=lambda p: p["name"].lower() != last):
         if not all(_same(cfg.get(k), v) for k, v in p["values"].items()):
             continue
         if all(ip not in devs or (devs[ip].get("sound", "beat") == ch["sound"]
@@ -1628,9 +1630,17 @@ class Light:
 ENGINE = Engine()
 
 
-def list_inputs():
+def list_inputs(fresh=False):
+    """Audio inputs. fresh=True asks the Mac again (sees BlackHole right after installing it);
+    only while stopped, because it resets the sound library."""
     try:
         import sounddevice as sd
+        if fresh and not ENGINE.running:
+            try:
+                sd._terminate()
+                sd._initialize()
+            except Exception:
+                pass
         out = []
         for i, d in enumerate(sd.query_devices()):
             if d["max_input_channels"] > 0:
@@ -1747,6 +1757,7 @@ def _apply_config_locked(body):
     new["music_apps"] = clean_music_apps(new["music_apps"])
     new["autostart"] = bool(new["autostart"])
     new["guide_done"] = bool(new["guide_done"])
+    new["preset_last"] = preset_name(new["preset_last"])
     new["lead"] = max(-150, min(250, int(new["lead"])))
     new["passthru"] = bool(new["passthru"])
     new["out_device"] = str(new["out_device"] or "")
@@ -1781,7 +1792,7 @@ def preset_action(body):
         if act == "apply":
             if idx is None:
                 return {"ok": False, "error": "That preset doesn't exist any more."}
-            apply_config(apply_preset(cfg, presets[idx]))
+            apply_config(dict(apply_preset(cfg, presets[idx]), preset_last=presets[idx]["name"]))
             CFG_REV[0] += 1
             return {"ok": True}
         if not name:
@@ -1805,7 +1816,12 @@ def preset_action(body):
             presets[idx]["name"] = new
         else:
             return {"ok": False, "error": "That preset doesn't exist any more."}
-        apply_config({"presets": presets})
+        last = cfg.get("preset_last", "")
+        if act == "save":
+            last = name
+        elif act == "rename" and last.lower() == name.lower():
+            last = presets[idx]["name"]
+        apply_config({"presets": presets, "preset_last": last})
     return {"ok": True}
 
 
@@ -1959,8 +1975,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(self._state()))
         elif self.path == "/api/outputs":
             self._send(200, json.dumps(outputs_info()))
-        elif self.path == "/api/devices":
-            self._send(200, json.dumps(list_inputs()))
+        elif self.path.split("?")[0] == "/api/devices":
+            self._send(200, json.dumps(list_inputs(fresh=self.path.endswith("?fresh=1"))))
         elif self.path == "/api/scan":
             self._send(200, json.dumps(scan_all(ENGINE.cfg)))
         elif self.path == "/api/playing":

@@ -564,6 +564,93 @@ window.addEventListener('temponome-save-failed', () => {
   b.hidden = false; clearTimeout(b._t); b._t = setTimeout(() => { b.hidden = true; }, 4000);
 });
 
+// ---------- presets (Colors) ----------
+let curPreset = '';
+function presetMsg(text, err) {
+  $('presetMsg').className = err ? 'msg err' : 'msg'; $('presetMsg').textContent = text;
+  clearTimeout($('presetMsg').t); $('presetMsg').t = setTimeout(() => { $('presetMsg').textContent = ''; }, 4000);
+}
+async function presetDo(body) {
+  const r = await T.api('/api/preset', body);
+  if (!r.ok) { presetMsg(r.error, true); return false; }
+  st = r.state; curPreset = st.preset; cfg.presets = st.cfg.presets;
+  return true;
+}
+function renderPresets() {
+  const box = $('presetList'); box.innerHTML = '';
+  const list = cfg.presets || [];
+  if (!list.length) { box.innerHTML = '<div class="row"><span class="hint" style="margin:0">No presets yet. Save the look you have now below.</span></div>'; return; }
+  for (const p of list) {
+    const row = document.createElement('div'); row.className = 'row';
+    const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name;
+    if (p.name === curPreset) { const t = document.createElement('span'); t.className = 'inuse'; t.textContent = 'In use'; name.appendChild(t); }
+    const btn = (text, fn) => { const b = document.createElement('button'); b.textContent = text; b.onclick = fn; b.setAttribute('aria-label', `${text} ${p.name}`); return b; };
+    const apply = btn('Use', async () => { if (await presetDo({ action: 'apply', name: p.name })) location.reload(); });
+    const ren = btn('Rename', () => {
+      const inp = document.createElement('input'); inp.type = 'text'; inp.value = p.name; inp.maxLength = 40; inp.setAttribute('aria-label', 'New name');
+      const ok = btn('OK', async () => { if (await presetDo({ action: 'rename', name: p.name, new: inp.value })) renderPresets(); });
+      const cancel = btn('Cancel', renderPresets);
+      inp.onkeydown = e => { if (e.key === 'Enter') ok.click(); if (e.key === 'Escape') cancel.click(); };
+      row.replaceChildren(inp, ok, cancel); inp.focus(); inp.select();
+    });
+    const del = btn('Delete', async () => { if (await presetDo({ action: 'delete', name: p.name })) { renderPresets(); presetMsg(`Deleted ${p.name}.`); } });
+    row.append(name, apply, ren, del);
+    box.appendChild(row);
+  }
+}
+$('presetSave').onclick = async () => {
+  const name = $('presetName').value.trim();
+  if (!name) { presetMsg('Give the preset a name first.', true); $('presetName').focus(); return; }
+  // wait for any change still being saved, so the preset holds exactly what you see
+  await T.saveCfg({});
+  const had = (cfg.presets || []).some(p => p.name.toLowerCase() === name.toLowerCase());
+  if (await presetDo({ action: 'save', name })) {
+    $('presetName').value = ''; renderPresets();
+    presetMsg(had ? `Updated ${name}.` : `Saved ${name}.`);
+  }
+};
+$('presetName').onkeydown = e => { if (e.key === 'Enter') $('presetSave').click(); };
+
+// ---------- start by itself (Sound) ----------
+function renderApps() {
+  $('autostart').setAttribute('aria-checked', !!cfg.autostart);
+  const box = $('appList'); box.innerHTML = '';
+  for (const a of cfg.music_apps || []) {
+    const row = document.createElement('div'); row.className = 'row';
+    const n = document.createElement('span'); n.className = 'grow'; n.textContent = a.name;
+    const b = document.createElement('button'); b.textContent = 'Remove'; b.setAttribute('aria-label', `Remove ${a.name}`);
+    b.onclick = () => { cfg.music_apps = cfg.music_apps.filter(x => x.id !== a.id); T.saveCfg({ music_apps: cfg.music_apps }); renderApps(); };
+    row.append(n, b); box.appendChild(row);
+  }
+  if (!(cfg.music_apps || []).length) box.innerHTML = '<div class="row"><span class="hint" style="margin:0">No music apps yet. Add one below.</span></div>';
+}
+$('autostart').onclick = () => { cfg.autostart = !cfg.autostart; T.saveCfg({ autostart: cfg.autostart }); renderApps(); };
+$('appAdd').onclick = async () => {
+  const box = $('appFound'); $('appMsg').textContent = '';
+  const known = new Set((cfg.music_apps || []).map(a => a.id));
+  const now = (await T.api('/api/playing')).filter(a => !known.has(a.id));
+  box.innerHTML = '';
+  if (!now.length) {
+    box.hidden = true;
+    $('appMsg').textContent = 'No other app is playing sound right now. Start a song in the app you want to add, then try again.';
+    return;
+  }
+  for (const a of now) {
+    const row = document.createElement('div'); row.className = 'row';
+    const n = document.createElement('span'); n.className = 'grow'; n.textContent = a.name;
+    const b = document.createElement('button'); b.textContent = 'Add'; b.setAttribute('aria-label', `Add ${a.name}`);
+    b.onclick = () => { cfg.music_apps = [...(cfg.music_apps || []), a]; T.saveCfg({ music_apps: cfg.music_apps }); renderApps(); row.remove(); if (!box.children.length) box.hidden = true; };
+    row.append(n, b); box.appendChild(row);
+  }
+  box.hidden = false;
+};
+
+// ---------- welcome guide (Lights) ----------
+$('guideAgain').onclick = () => {
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.show_guide) window.pywebview.api.show_guide();
+  else window.open('/#guide', 'temponome-main');
+};
+
 // ---------- start ----------
 async function init() {
   const devs = await T.api('/api/devices');
@@ -591,15 +678,21 @@ async function init() {
   setLead(cfg.lead);
   buildWheel(); showMode();
   renderDevs(); calSummary();
+  curPreset = st.preset; renderPresets(); renderApps();
   showTab(location.hash.slice(1));
+  let rev = st.cfg_rev;
   setInterval(async () => {
+    // a preset was put on from the main window or the menu bar: show (and keep) its values
+    const s0 = await T.api('/api/state');
+    if (s0.cfg_rev !== rev) { location.reload(); return; }
+    if (s0.preset !== curPreset && !$('colors').hidden) { curPreset = s0.preset; renderPresets(); }
     if (!$('colors').hidden) {         // keep the strip's "now" marker on the current tempo
-      const s = await T.api('/api/state'), b = s.running ? s.bpm : 0;
+      const s = s0, b = s.running ? s.bpm : 0;
       if (Math.round(b) !== Math.round(liveBpm)) { liveBpm = b; drawStrip(); }
       return;
     }
     if ($('sound').hidden) return;
-    const s = await T.api('/api/state');
+    const s = s0;
     $('meter').style.width = s.running ? Math.max(0, Math.min(100, (s.db + 70) / 60 * 100)) + '%' : '0';
     flowDelay(s);
   }, 150);

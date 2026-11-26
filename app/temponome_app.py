@@ -174,6 +174,11 @@ class Api:
             self._main.show()
             self._main.evaluate_js("window.showGuide && showGuide()")
 
+    def open_url(self, url):
+        """Links in the pages (BlackHole's download page) open in the default browser."""
+        if isinstance(url, str) and url.startswith("https://existential.audio/"):
+            webbrowser.open(url)
+
     def open_in_browser(self, path="/settings#timing"):
         """Fallback when the camera isn't available inside the app window."""
         webbrowser.open(self._base + path)

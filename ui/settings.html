@@ -81,6 +81,14 @@ button.primary { background: var(--accent-fill); color: var(--on-accent); border
 video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
 .switch .track:disabled, select:disabled, input[type=range]:disabled { opacity: .45; cursor: default; }
 #calFlash { position: fixed; inset: 0; background: #000; display: none; z-index: 99; color: #777; padding: 20px; font-size: 16px; }
+/* presets list (Colors) and music apps (Sound) */
+.plist .row { padding: 8px 0; }
+.plist .pname { flex: 1; min-width: 120px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plist .inuse { font-size: 11px; color: var(--on-accent); background: var(--accent-fill); border-radius: 9px; padding: 1px 8px; margin-left: 8px; font-weight: 500; }
+.plist button { min-height: 26px; padding: 3px 10px; font-size: 12px; }
+.plist input[type=text] { flex: 1; min-width: 120px; }
+.applist .row { padding: 7px 0; }
+.applist .row:first-child { border-top: 1px solid var(--line); }
 @media (max-width: 560px) { .flow .arrow { width: 16px; } .react { padding-left: 0; } .extras { grid-template-columns: 1fr; } .beatpick { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .pickbox { grid-template-columns: 1fr; justify-items: center; } .tabs button { min-width: 0; } }
 </style></head>
@@ -121,10 +129,19 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
   <div class="row"><label for="password" class="grow">Password</label><input type="password" id="password" autocomplete="current-password" style="width:240px"></div>
  </div>
  <p class="hint">Only needed for Tapo lights. It's saved on this Mac only.</p>
+ <div class="actions"><button id="guideAgain">Show the welcome guide</button></div>
 </section>
 
 <!-- Colors -->
 <section id="colors" role="tabpanel" aria-labelledby="tab-colors" hidden>
+ <h2>Presets</h2>
+ <div class="group plist" id="presetList"></div>
+ <div class="actions">
+  <input type="text" id="presetName" maxlength="40" placeholder="Name, e.g. Movie night" aria-label="Name for a new preset" style="width:210px">
+  <button class="primary" id="presetSave">Save current look</button>
+ </div>
+ <div class="msg" id="presetMsg" role="status"></div>
+ <p class="hint">A preset keeps your colors, the extras, brightness, pulse and what each light follows. Pick one on the main window or from the lamp in the menu bar.</p>
  <h2>On each beat</h2>
  <div class="beatpick" role="radiogroup" aria-label="What each beat changes">
   <button role="radio" id="pulseB" data-v="brightness" aria-checked="true">
@@ -189,6 +206,15 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
   <div class="row"><span class="grow">Level</span><div class="meter" style="width:200px" aria-hidden="true"><div id="meter"></div></div></div>
  </div>
  <p class="hint">BlackHole 2ch plays your Mac's own sound to Temponome (recommended). Choose the microphone to listen to a speaker in the room.</p>
+ <h2>Start by itself</h2>
+ <div class="group">
+  <div class="row"><span class="grow" id="autoLbl">Start when a music app plays<br><span class="hint" style="margin:0">Presses Play for you a moment after one of these apps starts playing. It never stops by itself: press Stop as usual.</span></span>
+   <span class="switch"><button class="track" id="autostart" role="switch" aria-labelledby="autoLbl" aria-checked="false"><span class="knob"></span></button></span></div>
+  <div class="applist" id="appList"></div>
+ </div>
+ <div class="actions"><button id="appAdd">Add an app that's playing now…</button></div>
+ <div class="group" id="appFound" hidden style="margin-top:10px"></div>
+ <div class="msg" id="appMsg" role="status"></div>
  <h2>Play through Temponome</h2>
  <div class="flow" id="flow" aria-hidden="true">
   <div class="node"><svg viewBox="0 0 34 28"><rect x="3" y="2" width="28" height="18" rx="2"/><line x1="0" y1="25" x2="34" y2="25"/></svg><b>Your Mac</b><small>plays into BlackHole</small></div>

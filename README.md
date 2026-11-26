@@ -26,6 +26,8 @@ Play music on your Mac (Spotify, Apple Music, YouTube, anything) and press **Pla
 - 📊 **Work like an equalizer.** Three lights become bass, middle and treble bars.
 - 🌈 **Turn the music into color.** Red for deep bass, green for voices and guitars, blue for cymbals.
 - 🎯 **Land exactly on the beat**, even on wireless speakers, with a quick camera calibration.
+- 🎚 **Presets.** Save a whole look as "Party" or "Chill" and switch with one click.
+- ▶️ **Start by itself** when Spotify or Music starts playing (if you switch it on).
 
 The window is a little stage of lamps: each of your lights is drawn as a lamp shade that glows just like the real one, and the tempo ticks along at the top.
 
@@ -44,7 +46,9 @@ The window is a little stage of lamps: each of your lights is drawn as a lamp sh
 3. **Find your lights.** Open **Settings** (⌘, or the gear) → **Lights** and press **Find my lights**. Tapo bulbs need your Tapo account sign-in, which stays on your Mac.
 4. **Press Play** and put on a song.
 
-**Brightness** and **Pulse** are right on the main window. **Stop** puts every light back the way it was before you pressed Play.
+A short welcome guide walks you through these steps the first time.
+
+**Brightness**, **Pulse** and your **Preset** are right on the main window. **Stop** puts every light back the way it was before you pressed Play. Closing the window keeps Temponome running behind a little lamp in the menu bar, with Play/Stop and your presets; choose **Quit** there to close it completely.
 
 ## Make it yours
 
@@ -61,6 +65,14 @@ The window is a little stage of lamps: each of your lights is drawn as a lamp sh
 | **Kick, Snare or Hi-hats** | Only that drum. The snare choice can also catch guitar or voice, which sit in the same range. |
 | **Bass, Middle or Treble level** | The light grows brighter as that part of the sound gets louder, like one bar of an equalizer. |
 | **Pitch to color** | Red when the bass takes over, green for voices and guitars, blue for cymbals. Brightness follows the loudness. |
+
+### Presets
+
+Save the look you have (colors, extras, brightness, pulse and what each light follows) in **Settings → Colors → Presets**, then switch between looks from the main window or the menu bar. *Party* and *Chill* are there to start with.
+
+### Start by itself
+
+In **Settings → Sound**, switch on **Start when a music app plays**. Temponome then presses Play for you a moment after Music, Spotify, TIDAL, Deezer or Amazon Music starts playing (you can add other apps). It never stops by itself, so press Stop when you're done. Videos in a browser and calls don't count.
 
 ### Colors and extras
 

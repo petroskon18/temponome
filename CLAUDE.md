@@ -97,7 +97,7 @@ anything they must do on their Mac, and keep the double-click launcher working.
   every 4 bars, a breakdown followed by a drop, and sound bars plus pitch to color). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (136 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (155 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -241,6 +241,27 @@ anything they must do on their Mac, and keep the double-click launcher working.
    Flash lights and a drop's burst lift shape lights (`L.boost`, `shape_level`) and a build-up
    dims them; Chase takes turns among lights on the beat only (`beat_positions`, `chase_turn`).
 
+17. **Presets, Start by itself, menu bar, first-run guide** (2026-11-26, spec
+   `docs/superpowers/specs/2026-11-26-presets-autostart-menubar-guide-design.md`):
+   - Presets (`presets`, `PRESET_KEYS`, starters Party/Chill): colors, extras, maxB/minB, smooth,
+     multi, and each light's `sound`/`color` by IP. `POST /api/preset` apply|save|rename|delete;
+     `current_preset` (state `preset`, "" = Custom) prefers `preset_last` when several match.
+     Applying bumps `CFG_REV` (state `cfg_rev`) so an open Settings page reloads instead of
+     saving stale values back. Picker top right of main.html; list in Settings → Colors.
+   - Start by itself (`autostart`, off by default; `music_apps`): owner rule: only music apps,
+     **never stops by itself**. `audio_route.playing_apps()` reads CoreAudio's process list
+     (`prs#`/`piro`/`pbid`, macOS 14.2+, no permission, no microphone). `AutoStart.tick`: 2 s of
+     a listed app → Play; after Play/Stop it waits for 3 s of quiet before it may start again.
+     Listening while stopped was rejected (mic dot; pass-through only routes music after Play).
+   - Menu bar (`app/menubar.py`, `menu_model` tested): lamp icon, Play/Stop, presets, Open,
+     Settings, Quit. The red close button only hides the main window (`Shell.on_closing`);
+     ⌘Q/Quit go through `TemponomeAppDelegate.applicationShouldTerminate_` → `on_main_closed`
+     (lights put back). pywebview re-sets the app delegate for every new window, so ours is
+     stored in `BrowserView._shared_app_delegate`. Not shown with the old launcher.
+   - First-run guide (main.html `#guide`, `guide_done`): shown when no light is set up;
+     Settings → Lights "Show the welcome guide" (`Api.show_guide`, or `/#guide` in a browser).
+     `GET /api/devices?fresh=1` re-asks PortAudio so a just-installed BlackHole shows up.
+
 ## History and lessons
 - Nov 2026 real-bulb test: "off the beat" had two causes. The owner's settings (max
   brightness 32%, long pulse) made each pulse a 20%↔30% wobble, and the grid locked onto
@@ -261,6 +282,8 @@ anything they must do on their Mac, and keep the double-click launcher working.
   sample-accurate. The goal is to feel on-beat.
 
 ## Not verified on real hardware yet
+- Presets, Start by itself, menu bar and first-run guide: not yet tried by the owner (2026-11-26).
+  The menu bar lamp could not be seen from here (no screen access).
 - The Stage of lamps look tried by the owner on 2026-11-26 (test build) and approved for 1.7.0.
 - Sound bars and pitch to color confirmed by the owner on 2026-11-25 (test build, real lights).
 - Color pulse and one-drum-per-light confirmed working by the owner on 2026-11-24 (test

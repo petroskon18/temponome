@@ -1384,6 +1384,15 @@ class Presets(unittest.TestCase):
         T.preset_action({"action": "save", "name": "MY LOOK"})          # same name: replaced, not added
         self.assertEqual(len(self.names()), 3)
 
+    def test_last_saved_wins_when_two_match(self):
+        T.preset_action({"action": "apply", "name": "Party"})
+        T.preset_action({"action": "save", "name": "Movie night"})       # same look as Party
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "Movie night")
+        T.preset_action({"action": "rename", "name": "Movie night", "new": "Film"})
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "Film")
+        T.preset_action({"action": "apply", "name": "Party"})
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "Party")
+
     def test_light_that_left_is_ignored(self):
         T.preset_action({"action": "save", "name": "Two"})
         T.apply_config({"devices": [{"ip": "10.0.0.2", "model": "govee", "sound": "hats", "color": "A"}]})

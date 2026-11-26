@@ -46,6 +46,33 @@ input.fill-range::-webkit-slider-thumb { margin-top: -6px; }
 .dot.ok { background: var(--ok); } .dot.wait { background: var(--wait); } .dot.warn { background: var(--warn); } .dot.error { background: var(--err); }
 #status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* preset picker, top right */
+.presetPick { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.presetPick select { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 6px; min-height: 26px; max-width: 170px; }
+
+/* first-run guide: covers the window below the title bar */
+#guide { position: fixed; inset: var(--titlebar) 0 0 0; z-index: 20; background: var(--body); overflow: auto;
+  display: flex; justify-content: center; }
+#guide[hidden] { display: none; }
+.gbox { width: 100%; max-width: 560px; padding: 0 24px 12px; display: flex; flex-direction: column; gap: 7px; }
+.gbox h1 { margin: 0; font-size: 19px; }
+.gsub, .gtip { margin: 0; font-size: 13px; color: var(--mut); }
+.steps { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.steps li { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
+.steps .num { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700;
+  border: 1.5px solid var(--track); color: var(--mut); }
+.steps li.done .num { background: var(--ok); border-color: var(--ok); color: #fff; }
+.gtext { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; align-items: center; }
+.gtext b { font-size: 14px; }
+.gtext b { grid-column: 1; }
+.gtext span { grid-column: 1; font-size: 12.5px; color: var(--mut); overflow: hidden; text-overflow: ellipsis; }
+.gact { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 210px; }
+.gact button { font-size: 12.5px; min-height: 26px; padding: 3px 12px; }
+.gact:empty { display: none; }
+button.primary { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
+.gfoot { display: flex; justify-content: space-between; align-items: center; margin-top: 2px; }
+
 @media (max-height: 380px) { .lamp .does { display: none; } #bpmNum { font-size: 24px; } }
 @media (prefers-reduced-motion: reduce) { .lamp .fill { transition: none; } }
 </style></head>
@@ -56,6 +83,7 @@ input.fill-range::-webkit-slider-thumb { margin-top: -6px; }
   <svg class="logo" viewBox="0 0 28 32" aria-hidden="true"><polygon points="3,26 25,26 19,3 9,3" fill="var(--cream)" stroke="var(--line)"/><line id="arm" x1="14" y1="25" x2="14" y2="6" stroke="#6b4f2a" stroke-width="2.5" stroke-linecap="round" style="transform-origin:14px 25px;transition:transform .12s"/><rect x="12" y="27" width="4" height="4" fill="#8e8e93"/></svg>
   <span id="bpmNum" aria-hidden="true">—</span><span id="lockTxt" aria-hidden="true">stopped</span>
  </div>
+ <label class="presetPick needsLights"><span class="caption">Preset</span><select id="preset" aria-label="Preset"></select></label>
 </header>
 
 <main class="stage needsLights" id="lamps" aria-label="Your lights"></main>
@@ -84,6 +112,20 @@ input.fill-range::-webkit-slider-thumb { margin-top: -6px; }
   <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" style="vertical-align:-3px"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>
   Settings</button>
 </footer>
+
+<div id="guide" hidden role="dialog" aria-modal="true" aria-labelledby="gTitle">
+ <div class="gbox">
+  <h1 id="gTitle">Welcome to Temponome</h1>
+  <p class="gsub">Three quick steps and your lights will follow your music.</p>
+  <ol class="steps">
+   <li id="g1"><span class="num" aria-hidden="true">1</span><div class="gtext"><b>Let it hear your music</b><span id="g1t"></span><div class="gact" id="g1a"></div></div></li>
+   <li id="g2"><span class="num" aria-hidden="true">2</span><div class="gtext"><b>Find your lights</b><span id="g2t"></span><div class="gact"><button id="g2b">Find my lights</button></div></div></li>
+   <li id="g3"><span class="num" aria-hidden="true">3</span><div class="gtext"><b>Try it</b><span id="g3t"></span><div class="gact"><button id="g3b">Play</button></div></div></li>
+  </ol>
+  <p class="gtip">Closing the window keeps Temponome running behind the little lamp in the menu bar. It can also start by itself when music plays (Settings → Sound).</p>
+  <div class="gfoot"><button id="gSkip">Skip for now</button><button id="gDone" class="primary">Done</button></div>
+ </div>
+</div>
 
 <script src="/ui/common.js"></script>
 <script>
@@ -155,6 +197,8 @@ function render() {
   lastBeats = st.beats;
   $('arm').style.transform = running ? `rotate(${tick ? 18 : -18}deg)` : 'rotate(0deg)';
   renderLamps();
+  renderPreset();
+  renderGuide();
 
   const saveFailed = Date.now() - saveFailedAt < 4000;
   $('status').textContent = saveFailed ? "Couldn't save your last change. Try again." : st.status;
@@ -186,13 +230,100 @@ function setMulti(chase) {
   T.saveCfg({ multi: chase ? 'chase' : 'sync' });
 }
 
+let rev = null, firstPoll = true;
 async function poll() {
-  try { st = await T.api('/api/state'); render(); } catch (e) { /* server restarting */ }
+  try {
+    st = await T.api('/api/state');
+    if (rev !== null && st.cfg_rev !== rev) loaded = false;      // a preset changed the sliders
+    rev = st.cfg_rev;
+    if (firstPoll) {
+      firstPoll = false;
+      if (location.hash === '#guide' || (!st.cfg.guide_done && !st.cfg.devices.some(d => d.ip))) showGuide();
+    }
+    render();
+  } catch (e) { /* server restarting */ }
 }
 async function togglePlay() {
   await T.api(st && st.running ? '/api/stop' : '/api/start', {});
   poll();
 }
+
+// ---------- presets ----------
+let presetKey = '';
+function renderPreset() {
+  const sel = $('preset'), names = (st.cfg.presets || []).map(p => p.name);
+  const key = JSON.stringify([names, st.preset]);
+  if (key === presetKey || document.activeElement === sel) return;
+  presetKey = key;
+  sel.innerHTML = '';
+  const add = (v, text, attrs) => { const o = document.createElement('option'); o.value = v; o.textContent = text; Object.assign(o, attrs || {}); sel.appendChild(o); };
+  if (!st.preset) add('', 'Custom', { disabled: true });
+  names.forEach(n => add(n, n));
+  add('\u0000edit', 'Edit presets…');
+  sel.value = st.preset || '';
+}
+$('preset').onchange = async () => {
+  const v = $('preset').value;
+  if (v === '\u0000edit') { presetKey = ''; renderPreset(); T.openSettings('colors'); $('preset').blur(); return; }
+  await T.api('/api/preset', { action: 'apply', name: v });
+  loaded = false; presetKey = ''; $('preset').blur(); poll();
+};
+
+// ---------- first-run guide ----------
+let inputs = null, micPicked = false, guideOn = false;
+const BH_URL = 'https://existential.audio/blackhole/';
+async function loadInputs() { try { inputs = await T.api('/api/devices?fresh=1'); } catch (e) { inputs = []; } renderGuide(); }
+function step(id, done) { $(id).classList.toggle('done', !!done); }
+function gButtons(list) {
+  const box = $('g1a'); box.innerHTML = '';
+  for (const [text, fn, primary] of list) {
+    const b = document.createElement('button'); b.textContent = text; b.onclick = fn;
+    if (primary) b.className = 'primary'; box.appendChild(b);
+  }
+}
+function renderGuide() {
+  if (!guideOn || !st) return;
+  const cfg = st.cfg, bh = (inputs || []).find(d => /blackhole/i.test(d.name));
+  const usingBh = bh && String(cfg.device) === bh.id;
+  let done1 = false;
+  if (inputs === null) { $('g1t').textContent = 'Checking your sound inputs…'; gButtons([]); }
+  else if (usingBh) { done1 = true; $('g1t').textContent = "Listening to your Mac's own sound through BlackHole."; gButtons([]); }
+  else if (bh) {
+    $('g1t').textContent = 'BlackHole is installed. Use it so Temponome hears what your Mac plays.';
+    gButtons([['Use BlackHole', () => T.saveCfg({ device: bh.id }).then(poll), true]]);
+  } else if (micPicked) { done1 = true; $('g1t').textContent = "Using the microphone: play music out loud near your Mac."; gButtons([]); }
+  else {
+    $('g1t').textContent = "Install the free BlackHole 2ch so Temponome hears your Mac's own sound.";
+    gButtons([['Get BlackHole', () => T.openLink(BH_URL), true], ['Check again', loadInputs],
+              ['Use the microphone', () => { micPicked = true; T.saveCfg({ device: '' }).then(poll); }]]);
+  }
+  step('g1', done1);
+  const ls = cfg.devices.filter(d => d.ip);
+  step('g2', ls.length);
+  $('g2t').textContent = ls.length ? `${ls.length === 1 ? '1 light' : ls.length + ' lights'}: ${ls.map(d => d.name || d.ip).join(', ')}`
+    : 'Temponome searches your Wi-Fi for Tapo and Govee lights.';
+  $('g2b').textContent = ls.length ? 'Add or change lights' : 'Find my lights';
+  step('g3', st.running && st.locked);
+  $('g3t').textContent = st.running ? (st.locked ? `It's working: ${Math.round(st.bpm)} BPM.` : 'Listening for the beat… put on a song with drums.')
+    : 'Put on a song, then press Play. Your lights should start pulsing.';
+  $('g3b').textContent = st.running ? 'Stop' : 'Play';
+  $('g3b').disabled = !ls.length;
+}
+function showGuide() {
+  guideOn = true; $('guide').hidden = false; inputs = null; loadInputs();
+  setTimeout(() => $('gDone').focus(), 50);
+}
+function closeGuide() {
+  guideOn = false; $('guide').hidden = true;
+  if (!st || !st.cfg.guide_done) T.saveCfg({ guide_done: true });
+}
+window.showGuide = showGuide;    // Settings → Lights "Show the welcome guide"
+window.addEventListener('hashchange', () => { if (location.hash === '#guide') showGuide(); });
+$('g2b').onclick = () => T.openSettings('lights');
+$('g3b').onclick = togglePlay;
+$('gSkip').onclick = closeGuide;
+$('gDone').onclick = closeGuide;
+$('guide').addEventListener('keydown', e => { if (e.key === 'Escape') closeGuide(); e.stopPropagation(); });
 
 $('play').onclick = togglePlay;
 $('maxB').oninput = () => { showSliders(); T.saveCfg({ maxB: +$('maxB').value }); };

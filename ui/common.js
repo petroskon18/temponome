@@ -35,5 +35,11 @@
     }
   }
 
-  window.T = { api, saveCfg, openSettings };
+  // Open a web page in the default browser (the app window would otherwise replace itself).
+  function openLink(url) {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_url) window.pywebview.api.open_url(url);
+    else window.open(url, '_blank', 'noopener');
+  }
+
+  window.T = { api, saveCfg, openSettings, openLink };
 })();
