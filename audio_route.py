@@ -6,6 +6,7 @@ their UID, which stays the same across restarts (indexes and IDs don't).
 """
 import ctypes
 import ctypes.util
+import os
 import struct
 
 NO_BLACKHOLE_MSG = ("Playing music through Temponome needs BlackHole 2ch. Install it, or turn "
@@ -90,6 +91,17 @@ class CoreAudioBackend:
                         "latency_ms": round(frames / rate * 1000.0, 1) if rate else 0.0})
         return out
 
+    def playing_apps(self):
+        """Bundle IDs of the apps sending sound to an output right now (macOS 14.2+ keeps a
+        list of audio processes). Needs no permission and doesn't touch the microphone."""
+        out = set()
+        for p in self._get(self.SYSTEM, "prs#", many=True) or []:
+            if self._get(p, "piro") and self._get(p, "ppid", ctype=ctypes.c_int32) != os.getpid():
+                b = self._str(p, "pbid")
+                if b:
+                    out.add(b)
+        return out
+
     def default(self):
         return self._get(self.SYSTEM, "dOut")
 
@@ -169,6 +181,36 @@ def level_for_db(to_db, db):
 
 
 BACKEND = CoreAudioBackend()
+
+
+def playing_apps():
+    """Apps playing sound now (bundle IDs); an empty set if the Mac can't tell."""
+    try:
+        return set(BACKEND.playing_apps())
+    except Exception:
+        return set()
+
+
+def app_for_bundle(bundle):
+    """{"id", "name"} of the installed app a sound process belongs to (a helper such as
+    com.spotify.client.helper belongs to com.spotify.client), or None for system services."""
+    try:
+        from AppKit import NSWorkspace
+    except Exception:
+        return None
+    parts = bundle.split(".")
+    for n in range(len(parts), 1, -1):
+        bid = ".".join(parts[:n])
+        url = NSWorkspace.sharedWorkspace().URLForApplicationWithBundleIdentifier_(bid)
+        if url is not None:
+            path = str(url.path())
+            if "/System/Library/" in path or "/usr/" in path:
+                return None                          # a system service
+            if path.count(".app") > 1:
+                continue                             # a helper inside an app: look for the app
+            name = os.path.basename(path.rstrip("/"))
+            return {"id": bid, "name": name[:-4] if name.endswith(".app") else name}
+    return None
 
 
 def list_outputs():

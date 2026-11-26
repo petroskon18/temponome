@@ -1342,5 +1342,178 @@ class GoveeSecondCopy(unittest.TestCase):
             T.GOVEE.close()
 
 
+class Presets(unittest.TestCase):
+    def setUp(self):
+        reset_home()
+        self.old = T.ENGINE.cfg
+        T.ENGINE.cfg = T.load_config()
+        T.apply_config({"devices": [
+            {"ip": "10.0.0.1", "model": "l530", "sound": "beat", "color": "blend"},
+            {"ip": "10.0.0.2", "model": "govee", "sound": "kick", "color": "A"}]})
+
+    def tearDown(self):
+        T.ENGINE.cfg = self.old
+
+    def names(self):
+        return [p["name"] for p in T.ENGINE.cfg["presets"]]
+
+    def test_starters_and_custom(self):
+        self.assertEqual(self.names(), ["Party", "Chill"])
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "")        # the defaults match no preset
+
+    def test_apply_starter_keeps_each_lights_choice(self):
+        self.assertTrue(T.preset_action({"action": "apply", "name": "party"})["ok"])
+        c = T.ENGINE.cfg
+        self.assertEqual((c["pulse"], c["multi"], c["maxB"]), ("color", "chase", 100))
+        self.assertEqual(c["devices"][1]["sound"], "kick")
+        self.assertEqual(T.current_preset(c), "Party")
+        T.apply_config({"maxB": 90})
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "")         # changed: custom again
+
+    def test_save_includes_lights_and_replaces_same_name(self):
+        T.apply_config({"maxB": 70})
+        self.assertTrue(T.preset_action({"action": "save", "name": "  My   look "})["ok"])
+        self.assertIn("My look", self.names())
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "My look")
+        devs = T.ENGINE.cfg["devices"]
+        devs[0]["sound"] = "pitch"
+        T.apply_config({"devices": devs})
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "")
+        T.preset_action({"action": "apply", "name": "my look"})
+        self.assertEqual(T.ENGINE.cfg["devices"][0]["sound"], "beat")
+        T.preset_action({"action": "save", "name": "MY LOOK"})          # same name: replaced, not added
+        self.assertEqual(len(self.names()), 3)
+
+    def test_light_that_left_is_ignored(self):
+        T.preset_action({"action": "save", "name": "Two"})
+        T.apply_config({"devices": [{"ip": "10.0.0.2", "model": "govee", "sound": "hats", "color": "A"}]})
+        self.assertTrue(T.preset_action({"action": "apply", "name": "Two"})["ok"])
+        self.assertEqual([d["ip"] for d in T.ENGINE.cfg["devices"]], ["10.0.0.2"])
+        self.assertEqual(T.ENGINE.cfg["devices"][0]["sound"], "kick")
+        self.assertEqual(T.current_preset(T.ENGINE.cfg), "Two")
+
+    def test_rename_delete_and_errors(self):
+        self.assertFalse(T.preset_action({"action": "rename", "name": "Party", "new": "chill"})["ok"])
+        self.assertTrue(T.preset_action({"action": "rename", "name": "Party", "new": "Dance"})["ok"])
+        self.assertTrue(T.preset_action({"action": "delete", "name": "Chill"})["ok"])
+        self.assertEqual(self.names(), ["Dance"])
+        self.assertFalse(T.preset_action({"action": "apply", "name": "Nope"})["ok"])
+        self.assertFalse(T.preset_action({"action": "save", "name": "   "})["ok"])
+
+    def test_bad_data_is_cleaned(self):
+        T.apply_config({"presets": [{"name": "A", "values": {"maxB": 50, "password": "x"},
+                                     "lights": {"1.1.1.1": {"sound": "disco"}}},
+                                    {"name": "a"}, "junk", {"values": {}}]})
+        p = T.ENGINE.cfg["presets"]
+        self.assertEqual(len(p), 1)
+        self.assertEqual(p[0]["values"], {"maxB": 50})
+        self.assertEqual(p[0]["lights"]["1.1.1.1"], {"sound": "beat", "color": "blend"})
+        T.apply_config({"colorA": "red"})                                # garbled color: kept
+        self.assertRegex(T.ENGINE.cfg["colorA"], r"^#[0-9a-fA-F]{6}$")
+
+    def test_state_reports_preset(self):
+        T.preset_action({"action": "apply", "name": "Chill"})
+        port = 0
+        srv = T.make_server(0)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        port = srv.server_address[1]
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state") as r:
+                st = json.load(r)
+            self.assertEqual(st["preset"], "Chill")
+            self.assertNotIn("password", st["cfg"])
+        finally:
+            srv.shutdown(); srv.server_close()
+
+
+class FakeEngine:
+    def __init__(self, autostart=True):
+        self.cfg = {"autostart": autostart, "music_apps": T.KNOWN_MUSIC_APPS}
+        self.want_running = False
+        self.starts = 0
+
+    def start(self):
+        self.starts += 1
+        self.want_running = True
+
+    def stop(self):
+        self.want_running = False
+
+
+class StartByItself(unittest.TestCase):
+    SPOTIFY = {"com.spotify.client.helper"}
+
+    def run_for(self, a, t0, t1, playing, step=1.0):
+        t = t0
+        while t <= t1 + 1e-9:
+            a.tick(t, playing)
+            t += step
+
+    def test_off_by_default(self):
+        self.assertFalse(T.DEFAULTS["autostart"])
+        e = FakeEngine(autostart=False)
+        self.run_for(T.AutoStart(e), 0, 20, self.SPOTIFY)
+        self.assertEqual(e.starts, 0)
+
+    def test_starts_once_after_two_seconds_of_music(self):
+        e = FakeEngine()
+        a = T.AutoStart(e)
+        self.run_for(a, 0, 1, self.SPOTIFY)
+        self.assertEqual(e.starts, 0)
+        self.run_for(a, 2, 30, self.SPOTIFY)
+        self.assertEqual(e.starts, 1)
+
+    def test_browser_and_system_sounds_dont_count(self):
+        e = FakeEngine()
+        self.run_for(T.AutoStart(e), 0, 20, {"com.google.Chrome.helper", "com.apple.Safari", "com.apple.CoreSpeech"})
+        self.assertEqual(e.starts, 0)
+
+    def test_stop_during_a_song_is_respected(self):
+        e = FakeEngine()
+        a = T.AutoStart(e)
+        self.run_for(a, 0, 3, self.SPOTIFY)
+        self.assertEqual(e.starts, 1)
+        e.stop()                                        # the owner presses Stop, Spotify keeps playing
+        self.run_for(a, 4, 60, self.SPOTIFY)
+        self.assertEqual(e.starts, 1)                   # never stops or restarts by itself
+        self.run_for(a, 61, 62, set())                  # a short pause isn't enough
+        self.run_for(a, 63, 70, self.SPOTIFY)
+        self.assertEqual(e.starts, 1)
+        self.run_for(a, 71, 75, set())                  # quiet for 3 s+, then a new song
+        self.run_for(a, 76, 80, {"com.apple.Music"})
+        self.assertEqual(e.starts, 2)
+
+    def test_manual_play_then_stop_doesnt_restart(self):
+        e = FakeEngine()
+        a = T.AutoStart(e)
+        e.start()                                       # pressed Play before any music
+        self.run_for(a, 0, 10, self.SPOTIFY)
+        e.stop()
+        self.run_for(a, 11, 30, self.SPOTIFY)
+        self.assertEqual(e.starts, 1)
+
+    def test_app_matching(self):
+        self.assertTrue(T.app_matches("com.spotify.client.helper", ["com.spotify.client"]))
+        self.assertTrue(T.app_matches("com.apple.Music", ["com.apple.Music"]))
+        self.assertFalse(T.app_matches("com.apple.MusicKit", ["com.apple.Music"]))
+        self.assertFalse(T.app_matches("x", [""]))
+
+    def test_reading_the_app_list_never_raises(self):
+        class Broken:
+            def playing_apps(self):
+                raise OSError("old macOS")
+        old = T.audio_route.BACKEND
+        T.audio_route.BACKEND = Broken()
+        try:
+            self.assertEqual(T.audio_route.playing_apps(), set())
+        finally:
+            T.audio_route.BACKEND = old
+
+    def test_music_apps_are_cleaned(self):
+        self.assertEqual(T.clean_music_apps([{"id": "a"}, {"id": "a"}, {"name": "x"}, 3]),
+                         [{"id": "a", "name": "a"}])
+
+
+
 if __name__ == "__main__":
     unittest.main()

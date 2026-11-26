@@ -64,7 +64,119 @@ DEFAULTS = {
     "accent": False,       # stronger flash on the first beat of each bar
     "bar_shift": 0,        # turn the colors around the wheel every 4 or 8 bars (0 = off)
     "drops": False,        # dim during build-ups, burst when the beat drops
+    "presets": [],         # saved looks (filled with STARTER_PRESETS below)
+    "autostart": False,    # press Play by itself when a music app starts playing
+    "music_apps": [],      # apps that count as music for autostart (filled below)
+    "guide_done": False,   # the first-run guide was finished or skipped
 }
+
+# ---------- presets ----------
+# A preset stores the look (colors, extras, brightness, pulse) and what each light follows.
+# Lights, login, sound input and speakers are never part of a preset.
+PRESET_KEYS = ("colorA", "colorB", "mode", "pulse", "accent", "bar_shift", "drops",
+               "maxB", "minB", "smooth", "multi")
+STARTER_PRESETS = [
+    {"name": "Party", "lights": {}, "values": {
+        "colorA": "#8a2bff", "colorB": "#ff2a4d", "mode": "tempo", "pulse": "color", "accent": True,
+        "bar_shift": 4, "drops": True, "maxB": 100, "minB": 10, "smooth": 0.25, "multi": "chase"}},
+    {"name": "Chill", "lights": {}, "values": {
+        "colorA": "#2a5bff", "colorB": "#2ad4c8", "mode": "tempo", "pulse": "brightness", "accent": False,
+        "bar_shift": 8, "drops": False, "maxB": 60, "minB": 15, "smooth": 0.8, "multi": "sync"}},
+]
+MAX_PRESETS = 30
+DEFAULTS["presets"] = copy.deepcopy(STARTER_PRESETS)
+
+# ---------- start by itself ----------
+# Apps whose sound counts as music. Matched by bundle ID or a helper under it
+# (Spotify plays from "com.spotify.client.helper"). Browsers and calls never count.
+KNOWN_MUSIC_APPS = [
+    {"id": "com.apple.Music", "name": "Music"},
+    {"id": "com.spotify.client", "name": "Spotify"},
+    {"id": "com.tidal.desktop", "name": "TIDAL"},
+    {"id": "com.deezer.deezer-desktop", "name": "Deezer"},
+    {"id": "com.amazon.music", "name": "Amazon Music"},
+]
+DEFAULTS["music_apps"] = copy.deepcopy(KNOWN_MUSIC_APPS)
+
+
+def preset_name(s):
+    return " ".join(str(s or "").split())[:40]
+
+
+def clean_presets(presets):
+    """Keep only well-formed presets: a name, known values, per-light choices by IP."""
+    out, seen = [], set()
+    for p in presets if isinstance(presets, list) else []:
+        if not isinstance(p, dict):
+            continue
+        name = preset_name(p.get("name"))
+        if not name or name.lower() in seen:
+            continue
+        vals = p.get("values") if isinstance(p.get("values"), dict) else {}
+        lights = {}
+        for ip, ch in (p.get("lights") if isinstance(p.get("lights"), dict) else {}).items():
+            if isinstance(ch, dict) and ip:
+                lights[str(ip)] = {"sound": ch.get("sound") if ch.get("sound") in SOUNDS else "beat",
+                                   "color": ch.get("color") if ch.get("color") in ("blend", "A", "B") else "blend"}
+        seen.add(name.lower())
+        out.append({"name": name, "values": {k: vals[k] for k in PRESET_KEYS if k in vals}, "lights": lights})
+    return out[:MAX_PRESETS]
+
+
+def make_preset(cfg, name):
+    """The current look, saved under a name."""
+    return {"name": preset_name(name), "values": {k: copy.deepcopy(cfg[k]) for k in PRESET_KEYS},
+            "lights": {d["ip"]: {"sound": d.get("sound", "beat"), "color": d.get("color", "blend")}
+                       for d in cfg["devices"] if d["ip"]}}
+
+
+def apply_preset(cfg, preset):
+    """The settings change (a body for apply_config) that puts a preset on. Lights the preset
+    doesn't know keep their own choice; lights it knows that are gone are ignored."""
+    body = copy.deepcopy(preset.get("values", {}))
+    lights = preset.get("lights") or {}
+    if lights:
+        devs = copy.deepcopy(cfg["devices"])
+        for d in devs:
+            if d["ip"] in lights:
+                d.update(lights[d["ip"]])
+        body["devices"] = devs
+    return body
+
+
+def _same(a, b):
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
+        return abs(a - b) < 1e-6
+    if isinstance(a, str) and isinstance(b, str):
+        return a.lower() == b.lower()
+    return a == b
+
+
+def current_preset(cfg):
+    """Name of the preset the settings match right now, or "" (custom)."""
+    devs = {d["ip"]: d for d in cfg["devices"] if d["ip"]}
+    for p in cfg.get("presets") or []:
+        if not all(_same(cfg.get(k), v) for k, v in p["values"].items()):
+            continue
+        if all(ip not in devs or (devs[ip].get("sound", "beat") == ch["sound"]
+                                  and devs[ip].get("color", "blend") == ch["color"])
+               for ip, ch in p["lights"].items()):
+            return p["name"]
+    return ""
+
+
+def clean_music_apps(apps):
+    out, seen = [], set()
+    for a in apps if isinstance(apps, list) else []:
+        if isinstance(a, dict) and isinstance(a.get("id"), str) and a["id"] and a["id"] not in seen:
+            seen.add(a["id"])
+            out.append({"id": a["id"][:200], "name": str(a.get("name") or a["id"])[:60]})
+    return out[:40]
+
+
+def app_matches(bundle, wanted):
+    """True if a playing app's bundle ID is one of the wanted apps or a helper inside one."""
+    return any(bundle == w or bundle.startswith(w + ".") for w in wanted if w)
 
 
 SOUNDS = ("beat", "kick", "snare", "hats", "low", "mid", "high", "pitch")   # what a light reacts to
@@ -129,6 +241,8 @@ def load_config():
         saved = _read_json(OLD_CONFIG_PATH) or {}
     cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
     cfg["devices"] = clean_devices(cfg["devices"])
+    cfg["presets"] = clean_presets(cfg["presets"])
+    cfg["music_apps"] = clean_music_apps(cfg["music_apps"])
     if saved.get("ip") and not any(d["ip"] for d in cfg["devices"]):  # old single-bulb config
         cfg["devices"][0]["ip"] = saved["ip"]
     return cfg
@@ -1624,6 +1738,15 @@ def _apply_config_locked(body):
     if new["pulse"] not in ("brightness", "color"):
         new["pulse"] = "brightness"
     new["steady"] = bool(new["steady"])
+    for k in ("colorA", "colorB"):     # presets and pages send these; keep the old one if garbled
+        if not (isinstance(new[k], str) and re.fullmatch(r"#[0-9a-fA-F]{6}", new[k])):
+            new[k] = ENGINE.cfg.get(k, DEFAULTS[k])
+    if new["mode"] not in ("tempo", "fixed"):
+        new["mode"] = "tempo"
+    new["presets"] = clean_presets(new["presets"])
+    new["music_apps"] = clean_music_apps(new["music_apps"])
+    new["autostart"] = bool(new["autostart"])
+    new["guide_done"] = bool(new["guide_done"])
     new["lead"] = max(-150, min(250, int(new["lead"])))
     new["passthru"] = bool(new["passthru"])
     new["out_device"] = str(new["out_device"] or "")
@@ -1643,6 +1766,120 @@ def _apply_config_locked(body):
     ENGINE.cfg = new
     save_config(new)
     return relist
+
+
+CFG_REV = [0]   # goes up when settings change from outside the Settings page (a preset)
+
+
+def preset_action(body):
+    """Apply, save, rename or delete a preset. Returns {"ok": bool, "error"?: str}."""
+    act, name = body.get("action"), preset_name(body.get("name"))
+    with CONFIG_LOCK:
+        cfg = ENGINE.cfg
+        presets = copy.deepcopy(cfg.get("presets") or [])
+        idx = next((i for i, p in enumerate(presets) if p["name"].lower() == name.lower()), None)
+        if act == "apply":
+            if idx is None:
+                return {"ok": False, "error": "That preset doesn't exist any more."}
+            apply_config(apply_preset(cfg, presets[idx]))
+            CFG_REV[0] += 1
+            return {"ok": True}
+        if not name:
+            return {"ok": False, "error": "Give the preset a name."}
+        if act == "save":
+            p = make_preset(cfg, name)
+            if idx is None:
+                if len(presets) >= MAX_PRESETS:
+                    return {"ok": False, "error": f"You can keep up to {MAX_PRESETS} presets. Delete one first."}
+                presets.append(p)
+            else:
+                presets[idx] = p          # same name: replaced
+        elif act == "delete" and idx is not None:
+            presets.pop(idx)
+        elif act == "rename" and idx is not None:
+            new = preset_name(body.get("new"))
+            if not new:
+                return {"ok": False, "error": "Give the preset a name."}
+            if any(p["name"].lower() == new.lower() for i, p in enumerate(presets) if i != idx):
+                return {"ok": False, "error": f"There's already a preset called {new}."}
+            presets[idx]["name"] = new
+        else:
+            return {"ok": False, "error": "That preset doesn't exist any more."}
+        apply_config({"presets": presets})
+    return {"ok": True}
+
+
+class AutoStart:
+    """Presses Play by itself when a music app has been playing for START_AFTER seconds.
+    It never stops by itself. After a Stop (or any time Temponome was playing) it waits until
+    the music apps have been quiet for REARM_AFTER seconds before it may start again, so
+    pressing Stop while a song plays is respected."""
+    START_AFTER = 2.0
+    REARM_AFTER = 3.0
+
+    def __init__(self, engine):
+        self.engine = engine
+        self.armed = True
+        self.since = None          # music has been playing since (while stopped and armed)
+        self.quiet_since = None    # no music app playing since
+
+    def tick(self, now, playing):
+        cfg = self.engine.cfg
+        wanted = [a["id"] for a in cfg.get("music_apps") or []]
+        music = any(app_matches(b, wanted) for b in playing)
+        if music:
+            self.quiet_since = None
+        else:
+            if self.quiet_since is None:
+                self.quiet_since = now
+            if now - self.quiet_since >= self.REARM_AFTER:
+                self.armed = True
+        if self.engine.want_running:
+            self.armed, self.since = False, None
+            return False
+        if not (cfg.get("autostart") and music and self.armed):
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = now
+        if now - self.since < self.START_AFTER:
+            return False
+        self.armed, self.since = False, None
+        self.engine.start()
+        return True
+
+    def run(self, playing_apps=None, interval=1.0):
+        playing_apps = playing_apps or audio_route.playing_apps
+        while True:
+            try:
+                on = self.engine.cfg.get("autostart")
+                self.tick(time.time(), playing_apps() if on else set())
+            except Exception:
+                pass
+            time.sleep(interval)
+
+
+AUTOSTART = None
+
+
+def start_autostart():
+    """Start watching for music apps (once). Called by the app and the old launcher."""
+    global AUTOSTART
+    if AUTOSTART is None:
+        AUTOSTART = AutoStart(ENGINE)
+        threading.Thread(target=AUTOSTART.run, daemon=True).start()
+    return AUTOSTART
+
+
+def playing_now():
+    """Apps playing sound right now, as [{"id", "name"}], for "Add an app playing now"."""
+    out, seen = [], set()
+    for b in sorted(audio_route.playing_apps()):
+        app = audio_route.app_for_bundle(b)
+        if app and app["id"] not in seen and app["id"] != "com.apple.WebKit":
+            seen.add(app["id"])
+            out.append(app)
+    return out
 
 
 UI_FILE = re.compile(r"^[a-z0-9_-]+\.(css|js|svg|png|html)$")
@@ -1682,7 +1919,8 @@ class Handler(BaseHTTPRequestHandler):
                 "locked": ENGINE.locked, "missing": ENGINE.missing,
                 "beats": ENGINE.beats, "color": live_color_hex(ENGINE.cfg, ENGINE.bpm or 110),
                 "lamps": ENGINE.lamps, "pass_delay": ENGINE.pass_delay,
-                "speaker": ENGINE.speaker, "speaker_lost": ENGINE.speaker_lost}
+                "speaker": ENGINE.speaker, "speaker_lost": ENGINE.speaker_lost,
+                "preset": current_preset(ENGINE.cfg), "cfg_rev": CFG_REV[0]}
         out["status"], out["status_level"] = status_text(out)
         return out
 
@@ -1720,6 +1958,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(list_inputs()))
         elif self.path == "/api/scan":
             self._send(200, json.dumps(scan_all(ENGINE.cfg)))
+        elif self.path == "/api/playing":
+            self._send(200, json.dumps(playing_now()))
         else:
             self._send(404, "{}")
 
@@ -1734,6 +1974,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/start":
             ENGINE.start()
             self._send(200, json.dumps(self._state()))
+        elif self.path == "/api/preset":
+            r = preset_action(body)
+            self._send(200, json.dumps(dict(r, state=self._state())))
         elif self.path == "/api/preview":
             self._send(200, json.dumps(preview_color(body.get("color"))))
         elif self.path == "/api/flash":
@@ -1796,6 +2039,7 @@ def make_server(port):
 
 def main():
     recover_sound_output()
+    start_autostart()
     server = make_server(PORT)
     url = f"http://127.0.0.1:{PORT}"
     print(f"Temponome running at {url}  (Ctrl+C to quit)")
