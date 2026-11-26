@@ -1515,5 +1515,58 @@ class StartByItself(unittest.TestCase):
 
 
 
+class MenuBarAndShell(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "app"))
+        import menubar
+        import temponome_app
+        self.M, self.A = menubar, temponome_app
+
+    def test_menu_when_stopped_and_playing(self):
+        st = {"running": False, "cfg": {"presets": [{"name": "Party"}, {"name": "Chill"}]}, "preset": "Chill"}
+        m = self.M.menu_model(st)
+        self.assertEqual(m[0]["title"], "Stopped")
+        self.assertEqual((m[1]["title"], m[1]["action"]), ("Play", ("toggle",)))
+        presets = next(e for e in m if e and e["title"] == "Presets")["sub"]
+        self.assertEqual([(p["title"], p["checked"]) for p in presets], [("Party", False), ("Chill", True)])
+        self.assertEqual(m[-1]["action"], ("quit",))
+        m = self.M.menu_model({"running": True, "bpm": 121.6, "cfg": {"presets": []}})
+        self.assertEqual((m[0]["title"], m[1]["title"]), ("Playing · 122 BPM", "Stop"))
+        presets = next(e for e in m if e and e["title"] == "Presets")["sub"]
+        self.assertFalse(presets[0]["enabled"])
+
+    def test_close_button_hides_and_quit_quits_once(self):
+        class Win:
+            hidden = shown = 0
+            def hide(self): self.hidden += 1
+            def show(self): self.shown += 1
+        quits = []
+        w = Win()
+        sh = self.A.Shell(None, None, w, quit=lambda: quits.append(1))
+        self.assertFalse(sh.on_closing())          # closing is cancelled: the window only hides
+        self.assertEqual(w.hidden, 1)
+        sh.action(("show",))
+        self.assertEqual(w.shown, 1)
+        sh.action(("quit",)); sh.quit()
+        self.assertEqual(quits, [1])
+        self.assertTrue(sh.on_closing())           # while quitting, windows may close
+
+    def test_menu_play_toggles_the_engine(self):
+        sh = self.A.Shell(None, None, None, quit=lambda: None)
+        old = T.ENGINE.start, T.ENGINE.stop
+        calls = []
+        T.ENGINE.start, T.ENGINE.stop = (lambda: calls.append("start")), (lambda: calls.append("stop"))
+        try:
+            T.ENGINE.want_running = False
+            sh.action(("toggle",))
+            T.ENGINE.want_running = True
+            sh.action(("toggle",))
+        finally:
+            T.ENGINE.start, T.ENGINE.stop = old
+            T.ENGINE.want_running = False
+        self.assertEqual(calls, ["start", "stop"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

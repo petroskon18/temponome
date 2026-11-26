@@ -4,9 +4,9 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
 a = Analysis(
     [os.path.join(ROOT, "app", "temponome_app.py")],
-    pathex=[ROOT],
+    pathex=[ROOT, os.path.join(ROOT, "app")],
     datas=[(os.path.join(ROOT, "ui"), "ui")],
-    hiddenimports=["temponome", "audio_route", "passthrough", "tapo"],
+    hiddenimports=["temponome", "audio_route", "passthrough", "tapo", "menubar", "PyObjCTools.AppHelper"],
     excludes=["scipy", "tkinter", "matplotlib", "pytest"],
 )
 pyz = PYZ(a.pure)

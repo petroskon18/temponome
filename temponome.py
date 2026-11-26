@@ -1893,6 +1893,27 @@ def serve_ui(name):
         return f.read()
 
 
+def state_dict():
+    """Everything the pages (and the menu bar) show, as one dict."""
+    c = dict(ENGINE.cfg)
+    c["has_password"] = bool(c.get("password"))
+    c.pop("password", None)
+    out = {"cfg": c, "running": ENGINE.running, "error": ENGINE.error,
+            "bpm": round(ENGINE.bpm, 1), "brightness": ENGINE.brightness,
+            "lights": ENGINE.lights, "lat": ENGINE.lat,
+            "level": round(ENGINE.level, 2), "onsets": ENGINE.onsets,
+            "db": round(20 * np.log10(max(ENGINE.rms, 1e-7)), 1),
+            "connecting": ENGINE.connecting, "audio_open": ENGINE.audio_open,
+            "dropped": ENGINE.dropped,
+            "locked": ENGINE.locked, "missing": ENGINE.missing,
+            "beats": ENGINE.beats, "color": live_color_hex(ENGINE.cfg, ENGINE.bpm or 110),
+            "lamps": ENGINE.lamps, "pass_delay": ENGINE.pass_delay,
+            "speaker": ENGINE.speaker, "speaker_lost": ENGINE.speaker_lost,
+            "preset": current_preset(ENGINE.cfg), "cfg_rev": CFG_REV[0]}
+    out["status"], out["status_level"] = status_text(out)
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1906,23 +1927,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _state(self):
-        c = dict(ENGINE.cfg)
-        c["has_password"] = bool(c.get("password"))
-        c.pop("password", None)
-        out = {"cfg": c, "running": ENGINE.running, "error": ENGINE.error,
-                "bpm": round(ENGINE.bpm, 1), "brightness": ENGINE.brightness,
-                "lights": ENGINE.lights, "lat": ENGINE.lat,
-                "level": round(ENGINE.level, 2), "onsets": ENGINE.onsets,
-                "db": round(20 * np.log10(max(ENGINE.rms, 1e-7)), 1),
-                "connecting": ENGINE.connecting, "audio_open": ENGINE.audio_open,
-                "dropped": ENGINE.dropped,
-                "locked": ENGINE.locked, "missing": ENGINE.missing,
-                "beats": ENGINE.beats, "color": live_color_hex(ENGINE.cfg, ENGINE.bpm or 110),
-                "lamps": ENGINE.lamps, "pass_delay": ENGINE.pass_delay,
-                "speaker": ENGINE.speaker, "speaker_lost": ENGINE.speaker_lost,
-                "preset": current_preset(ENGINE.cfg), "cfg_rev": CFG_REV[0]}
-        out["status"], out["status_level"] = status_text(out)
-        return out
+        return state_dict()
 
     def _refuse_foreign(self):
         """Only Temponome's own pages may talk to this server: reject other Host names

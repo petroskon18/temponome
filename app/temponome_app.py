@@ -3,7 +3,8 @@
 pages in native macOS windows (WebKit via pywebview) instead of a browser tab.
 
 The main window is the deck; Settings opens in a second window (⌘, or the gear button).
-Closing the main window stops the lights' engine and quits."""
+Closing the main window hides it; Temponome keeps running behind the lamp in the menu bar.
+Quit (menu bar, ⌘Q or the app menu) puts the lights back and quits."""
 import os
 import socket
 import sys
@@ -167,6 +168,12 @@ class Api:
     def _settings_closed(self):
         self._settings = None
 
+    def show_guide(self):
+        """Settings → Lights "Show the welcome guide": open it in the main window."""
+        if self._main is not None:
+            self._main.show()
+            self._main.evaluate_js("window.showGuide && showGuide()")
+
     def open_in_browser(self, path="/settings#timing"):
         """Fallback when the camera isn't available inside the app window."""
         webbrowser.open(self._base + path)
@@ -180,9 +187,74 @@ def on_main_closed(server, shutdown=shutdown_all, exit=os._exit):
         exit(0)
 
 
+class Shell:
+    """What the menu bar and the Mac's own Quit / Dock click do."""
+
+    def __init__(self, server, api, main, quit=None):
+        self.server, self.api, self.main = server, api, main
+        self.quitting = False
+        self._quit = quit or (lambda: on_main_closed(server))
+
+    def on_closing(self):
+        """Red close button: hide the window and keep playing (the menu bar lamp stays)."""
+        if self.quitting:
+            return True
+        self.main.hide()
+        return False
+
+    def quit(self):
+        if self.quitting:
+            return
+        self.quitting = True
+        self._quit()
+
+    def action(self, act):
+        kind = act[0]
+        if kind == "toggle":
+            eng = temponome.ENGINE
+            eng.stop() if eng.want_running else eng.start()
+        elif kind == "preset":
+            temponome.preset_action({"action": "apply", "name": act[1]})
+        elif kind == "show":
+            self.main.show()
+        elif kind == "settings":
+            self.main.show()
+            self.api.open_settings()
+        elif kind == "quit":
+            self.quit()
+
+
+def install_mac_hooks(shell):
+    """On the main thread: the menu bar lamp, ⌘Q quits for real, a Dock click shows the window."""
+    from PyObjCTools import AppHelper
+
+    def install():
+        try:
+            from webview.platforms.cocoa import BrowserView
+            import menubar
+
+            class TemponomeAppDelegate(BrowserView.AppDelegate):
+                def applicationShouldTerminate_(self, app):
+                    threading.Thread(target=shell.quit, daemon=True).start()
+                    return 0                    # NSTerminateCancel: shell.quit exits once the lights are back
+
+                def applicationShouldHandleReopen_hasVisibleWindows_(self, app, visible):
+                    shell.main.show()
+                    return True
+
+            BrowserView._shared_app_delegate = TemponomeAppDelegate.alloc().init()
+            BrowserView.app.setDelegate_(BrowserView._shared_app_delegate)
+            shell._menubar = menubar.make_menubar(temponome.state_dict, shell.action)
+        except Exception as e:                  # never let the extras stop the app from working
+            print("menu bar unavailable:", e, file=sys.stderr)
+
+    AppHelper.callAfter(install)
+
+
 def run():
     import webview
     temponome.recover_sound_output()
+    temponome.start_autostart()
     server = start_server(8765)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -191,10 +263,12 @@ def run():
                                  width=MAIN_SIZE[0], height=MAIN_SIZE[1], min_size=MAIN_MIN)
     api._main = main
     main.events.before_show += lambda: merge_title_bar(main, MAIN_SIZE)
-
-    # os._exit also closes the Settings window and WebKit helpers; settings are saved atomically
+    shell = Shell(server, api, main)
+    main.events.closing += shell.on_closing
+    # if the window really closes (it shouldn't), still quit cleanly; os._exit also closes
+    # the Settings window and WebKit helpers; settings are saved atomically
     main.events.closed += lambda: on_main_closed(server)
-    webview.start(private_mode=False)
+    webview.start(lambda: install_mac_hooks(shell), private_mode=False)
 
 
 if __name__ == "__main__":
