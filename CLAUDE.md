@@ -291,8 +291,8 @@ anything they must do on their Mac, and keep the double-click launcher working.
   sample-accurate. The goal is to feel on-beat.
 
 ## Not verified on real hardware yet
-- Presets, Start by itself, menu bar, first-run guide and white warmth: not yet tried by the owner.
-  The menu bar lamp could not be seen from here (no screen access).
+- Presets, Start by itself, menu bar (and its off switch), first-run guide and white warmth:
+  owner tried the test build on 2026-11-27, no problems found.
 - The Stage of lamps look tried by the owner on 2026-11-26 (test build) and approved for 1.7.0.
 - Sound bars and pitch to color confirmed by the owner on 2026-11-25 (test build, real lights).
 - Color pulse and one-drum-per-light confirmed working by the owner on 2026-11-24 (test
