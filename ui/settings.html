@@ -88,6 +88,9 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
 .plist button { min-height: 26px; padding: 3px 10px; font-size: 12px; }
 .plist input[type=text] { flex: 1; min-width: 120px; }
 .applist .row { padding: 7px 0; }
+.ctbox { margin-top: 12px; }
+input#ct::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, #ffb46b, #ecf1ff); box-shadow: inset 0 0 0 1px var(--line); }
+input#ct::-webkit-slider-thumb { margin-top: -6px; }
 .applist .row:first-child { border-top: 1px solid var(--line); }
 @media (max-width: 560px) { .flow .arrow { width: 16px; } .react { padding-left: 0; } .extras { grid-template-columns: 1fr; } .beatpick { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .pickbox { grid-template-columns: 1fr; justify-items: center; } .tabs button { min-width: 0; } }
@@ -191,6 +194,11 @@ video { width: 260px; max-width: 100%; border-radius: 8px; background: #000; }
     <button role="radio" id="pickB" aria-checked="false"><span class="sw" id="swB"></span>Energetic</button>
    </div>
    <p class="hint">Click a piece of the wheel. The edge is vivid, the middle is softer, and the center is white.</p>
+   <div id="ctBox" class="ctbox" hidden>
+    <label for="ct" style="display:flex;justify-content:space-between"><span>White light</span><span class="marking" id="ctV"></span></label>
+    <input type="range" id="ct" min="2500" max="6500" step="100">
+    <div class="ends marking"><span>Warm</span><span>Cool</span></div>
+   </div>
    <div class="actions"><button id="preview">Preview on lights</button></div>
    <div class="msg" id="pvMsg" role="status"></div>
   </div>

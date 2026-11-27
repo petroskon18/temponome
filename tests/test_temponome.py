@@ -1577,5 +1577,87 @@ class MenuBarAndShell(unittest.TestCase):
 
 
 
+class WhiteTemperature(unittest.TestCase):
+    def cfg(self, **kw):
+        c = dict(T.DEFAULTS)
+        c.update(kw)
+        return c
+
+    def test_white_uses_its_temperature(self):
+        c = self.cfg(colorA="#ffffff", kelvinA=2700, colorB="#ff2a4d", mode="fixed")
+        self.assertEqual(T.pick_color(c, 120), (2700, 0))
+        self.assertTrue(T.is_white(*T.pick_color(c, 120)))
+        self.assertEqual(T.pick_color(c, 120, "B")[1] > 0, True)       # a real color stays a color
+
+    def test_blends_and_pulses(self):
+        c = self.cfg(colorA="#ffffff", kelvinA=2500, colorB="#ffffff", kelvinB=6500, mode="tempo")
+        self.assertEqual(T.blend_colors(c, 0), (2500, 0))
+        self.assertEqual(T.blend_colors(c, 0.5), (4500, 0))
+        self.assertEqual(T.pulse_color(c, 1.0), (6500, 0))
+        c = self.cfg(colorA="#ffffff", kelvinA=3000, colorB="#ff0000", mode="tempo")
+        self.assertEqual(T.blend_colors(c, 0), (3000, 0))              # calm end: warm white
+        h, sat = T.blend_colors(c, 1)
+        self.assertEqual((h, sat), (0, 100))                           # energetic end: red
+        self.assertFalse(T.is_white(*T.blend_colors(c, 0.5)))
+
+    def test_values_are_kept_in_range(self):
+        self.assertEqual(T.clamp_kelvin(1000), 2500)
+        self.assertEqual(T.clamp_kelvin(9000), 6500)
+        self.assertEqual(T.clamp_kelvin(4049), 4000)
+        reset_home()
+        old = T.ENGINE.cfg
+        try:
+            T.ENGINE.cfg = T.load_config()
+            T.apply_config({"kelvinA": 99999, "kelvinB": "warm"})
+            self.assertEqual((T.ENGINE.cfg["kelvinA"], T.ENGINE.cfg["kelvinB"]), (6500, 4000))
+        finally:
+            T.ENGINE.cfg = old
+
+    def test_screen_color_of_white(self):
+        warm, cool = T.hsv_hex(2500, 0), T.hsv_hex(6500, 0)
+        self.assertEqual(warm, "#ffb46b")
+        self.assertGreater(int(cool[5:7], 16), int(warm[5:7], 16))      # cool white is bluer
+        self.assertEqual(T.hsv_hex(0, 0), "#ffffff")                   # plain unsaturated stays white
+
+    def test_govee_gets_kelvin(self):
+        sent = []
+        old = T.GOVEE.send
+        T.GOVEE.send = lambda ip, cmd, data, addr=None: sent.append((cmd, data))
+        try:
+            lamp = T.GoveeLamp("127.0.0.1")
+            import asyncio
+            asyncio.run(lamp.send_state(50, 3200, 0))
+            asyncio.run(lamp.send_state(50, 3200, 0))                   # nothing changed: nothing sent
+        finally:
+            T.GOVEE.send = old
+        self.assertEqual(sent, [("brightness", {"value": 50}),
+                                ("colorwc", {"color": {"r": 0, "g": 0, "b": 0}, "colorTemInKelvin": 3200})])
+
+    def test_tapo_gets_kelvin(self):
+        calls = []
+
+        class Req:
+            def brightness(self, b): calls.append(("b", b)); return self
+            def color_temperature(self, k): calls.append(("k", k)); return self
+            def hue_saturation(self, h, s): calls.append(("hs", h, s)); return self
+            async def send(self, h): calls.append("send")
+
+        class Bulb:
+            def set(self): return Req()
+        import asyncio
+        asyncio.run(T.Engine._send_tapo(Bulb(), 40, 5000, 0))
+        self.assertEqual(calls, [("b", 40), ("k", 5000), "send"])
+
+    def test_preview_white_with_temperature(self):
+        old = T.ENGINE.running, T.ENGINE.preview
+        T.ENGINE.running = True
+        try:
+            self.assertTrue(T.preview_color("#ffffff", 2800)["ok"])
+            self.assertEqual(T.ENGINE.preview[:2], (2800, 0))
+        finally:
+            T.ENGINE.running, T.ENGINE.preview = old
+
+
+
 if __name__ == "__main__":
     unittest.main()

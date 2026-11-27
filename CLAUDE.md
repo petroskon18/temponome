@@ -97,7 +97,7 @@ anything they must do on their Mac, and keep the double-click launcher working.
   every 4 bars, a breakdown followed by a drop, and sound bars plus pitch to color). It needs numpy and scipy. Stop any other Temponome first:
   only one program can hold UDP port 4002 (Govee replies).
 - `tests/test_temponome.py`: unit tests (stdlib unittest; pytest isn't installed):
-  `python3 -m unittest tests.test_temponome` → OK (155 tests: settings migration and safe
+  `python3 -m unittest tests.test_temponome` → OK (162 tests: settings migration and safe
   saving, page routes and the foreign-request check, status wording, deck state, app shell
   port/shutdown, second-copy message).
 - **Robustness rules (from the final review):** settings are written atomically under
@@ -261,6 +261,13 @@ anything they must do on their Mac, and keep the double-click launcher working.
    - First-run guide (main.html `#guide`, `guide_done`): shown when no light is set up;
      Settings → Lights "Show the welcome guide" (`Api.show_guide`, or `/#guide` in a browser).
      `GET /api/devices?fresh=1` re-asks PortAudio so a just-installed BlackHole shows up.
+18. **White light warmth** (2026-11-27, owner asked): when calm or energetic is white, Settings →
+   Colors shows a Warm ↔ Cool slider (`kelvinA` / `kelvinB`, 2500–6500 K, default 4000, in presets).
+   White travels through the color code as `(kelvin, 0)` (`is_white`: sat 0 and "hue" ≥ 1000), and is
+   sent as a real color temperature: Tapo `color_temperature(k)` (its white LEDs), Govee `colorwc`
+   with `colorTemInKelvin`. No hue glide for white. Two whites blend by temperature; white to a
+   color goes through pale tints and lands on the white temperature at the calm end. Screen tint:
+   `kelvin_hex` (same numbers in settings.js `kelvinHex`).
 
 ## History and lessons
 - Nov 2026 real-bulb test: "off the beat" had two causes. The owner's settings (max
@@ -282,7 +289,7 @@ anything they must do on their Mac, and keep the double-click launcher working.
   sample-accurate. The goal is to feel on-beat.
 
 ## Not verified on real hardware yet
-- Presets, Start by itself, menu bar and first-run guide: not yet tried by the owner (2026-11-26).
+- Presets, Start by itself, menu bar, first-run guide and white warmth: not yet tried by the owner.
   The menu bar lamp could not be seen from here (no screen access).
 - The Stage of lamps look tried by the owner on 2026-11-26 (test build) and approved for 1.7.0.
 - Sound bars and pitch to color confirmed by the owner on 2026-11-25 (test build, real lights).

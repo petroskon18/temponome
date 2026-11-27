@@ -47,6 +47,8 @@ DEFAULTS = {
     "multi": "sync",        # "sync" = all pulse together, "chase" = take turns
     "colorA": "#2a5bff",   # calm / slow tempo
     "colorB": "#ff2a4d",   # energetic / fast tempo
+    "kelvinA": 4000,       # when the calm color is white: its color temperature (warm 2500 .. cool 6500)
+    "kelvinB": 4000,       # the same for the energetic color
     "mode": "tempo",       # "tempo" = blend A->B by tempo, "fixed" = only color A
     "minB": 15,
     "maxB": 100,
@@ -74,7 +76,7 @@ DEFAULTS = {
 # ---------- presets ----------
 # A preset stores the look (colors, extras, brightness, pulse) and what each light follows.
 # Lights, login, sound input and speakers are never part of a preset.
-PRESET_KEYS = ("colorA", "colorB", "mode", "pulse", "accent", "bar_shift", "drops",
+PRESET_KEYS = ("colorA", "colorB", "kelvinA", "kelvinB", "mode", "pulse", "accent", "bar_shift", "drops",
                "maxB", "minB", "smooth", "multi")
 STARTER_PRESETS = [
     {"name": "Party", "lights": {}, "values": {
@@ -497,6 +499,14 @@ class GoveeLamp:
         GOVEE.send(self.ip, "turn", {"value": 1})
 
     async def send_state(self, b, hue, sat):
+        if is_white(hue, sat):                  # white light at a color temperature
+            if b != self.last_b:
+                GOVEE.send(self.ip, "brightness", {"value": int(max(1, min(100, b)))})
+                self.last_b = b
+            if self.last_rgb != ("K", hue):
+                GOVEE.send(self.ip, "colorwc", {"color": {"r": 0, "g": 0, "b": 0}, "colorTemInKelvin": int(hue)})
+                self.last_rgb = ("K", hue)
+            return
         r, g, bl = colorsys.hsv_to_rgb((hue % 360) / 360.0, max(0, min(100, sat)) / 100.0, 1.0)
         rgb = (int(round(r * 255)), int(round(g * 255)), int(round(bl * 255)))
         if b != self.last_b:          # brightness first: it carries the beat
@@ -977,6 +987,33 @@ def hue_sat(hex_color):
     return int(round(h * 360)) % 360, int(round(s * 100))
 
 
+# White light with a color temperature travels through the color code as (kelvin, 0):
+# saturation 0 and a "hue" of 1000 or more, which no real hue reaches. Tapo bulbs then switch
+# to their white LEDs (2500-6500 K); Govee lamps get colorTemInKelvin.
+KELVIN_MIN, KELVIN_MAX = 2500, 6500
+
+
+def clamp_kelvin(k):
+    return int(round(max(KELVIN_MIN, min(KELVIN_MAX, int(k))) / 100.0) * 100)
+
+
+def is_white(hue, sat):
+    return sat == 0 and hue >= 1000
+
+
+def kelvin_hex(k):
+    """Roughly how white light of k kelvin looks on screen (warm = amber, cool = bluish)."""
+    t = (clamp_kelvin(k) - KELVIN_MIN) / (KELVIN_MAX - KELVIN_MIN)
+    warm, cool = (255, 180, 107), (236, 241, 255)
+    return "#%02x%02x%02x" % tuple(int(round(w + (c - w) * t)) for w, c in zip(warm, cool))
+
+
+def _white_of(cfg, key):
+    """(kelvin, 0) if color `key` is white, else None."""
+    _, sat = hue_sat(cfg[key])
+    return (clamp_kelvin(cfg.get("kelvin" + key[-1], 4000)), 0) if sat == 0 else None
+
+
 def pick_color(cfg, bpm, which="blend"):
     """The color a light should show now, as (hue, saturation).
 
@@ -985,15 +1022,23 @@ def pick_color(cfg, bpm, which="blend"):
     directly would turn opposite colors into white halfway. White (saturation 0) has no
     hue of its own, so it takes the other color's."""
     if which == "A" or (which == "blend" and cfg["mode"] == "fixed"):
-        return hue_sat(cfg["colorA"])
+        return _white_of(cfg, "colorA") or hue_sat(cfg["colorA"])
     if which == "B":
-        return hue_sat(cfg["colorB"])
+        return _white_of(cfg, "colorB") or hue_sat(cfg["colorB"])
     return blend_colors(cfg, (bpm - 60) / 120)
 
 
 def blend_colors(cfg, t):
     """Calm (A) at t=0 to energetic (B) at t=1, around the color wheel (see pick_color)."""
     (ha, sa), (hb, sb) = hue_sat(cfg["colorA"]), hue_sat(cfg["colorB"])
+    t = min(max(t, 0.0), 1.0)
+    wa, wb = _white_of(cfg, "colorA"), _white_of(cfg, "colorB")
+    if wa and wb:                       # both white: slide between the two temperatures
+        return clamp_kelvin(wa[0] + (wb[0] - wa[0]) * t), 0
+    if wa and t <= 0:
+        return wa
+    if wb and t >= 1:
+        return wb
     if sa == 0:
         ha = hb
     if sb == 0:
@@ -1031,6 +1076,8 @@ def pulse_color(cfg, env):
 
 
 def hsv_hex(hue, sat):
+    if is_white(hue, sat):
+        return kelvin_hex(hue)
     r, g, b = colorsys.hsv_to_rgb((hue % 360) / 360.0, max(0, min(100, sat)) / 100.0, 1.0)
     return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
 
@@ -1064,13 +1111,18 @@ def pitch_hue(p):
     return int(round(240 * min(1.0, max(0.0, p))))
 
 
-def preview_color(hex_color):
+def preview_color(hex_color, kelvin=None):
     """Show one color on every connected light for a moment (Settings -> Colors)."""
     if not isinstance(hex_color, str) or not HEX_COLOR.match(hex_color):
         return {"ok": False, "error": "That isn't a color."}
     if not ENGINE.running:
         return {"ok": False, "error": "Press Play first so Temponome is connected to your lights."}
     hue, sat = hue_sat(hex_color)
+    if sat == 0 and kelvin is not None:
+        try:
+            hue = clamp_kelvin(kelvin)          # white with its temperature
+        except (TypeError, ValueError):
+            pass
     ENGINE.preview = (hue, sat, time.time() + PREVIEW_SECONDS)
     return {"ok": True}
 
@@ -1232,6 +1284,13 @@ class Engine:
 
     @staticmethod
     async def _send_tapo(h, b, hue, sat):
+        if is_white(hue, sat):                  # the bulb's own white LEDs, warm to cool
+            try:
+                await asyncio.wait_for(h.set().brightness(b).color_temperature(int(hue)).send(h), 3.0)
+            except AttributeError:
+                await asyncio.wait_for(h.set_brightness(b), 3.0)
+                await asyncio.wait_for(h.set_color_temperature(int(hue)), 3.0)
+            return
         try:
             await asyncio.wait_for(h.set().brightness(b).hue_saturation(hue, sat).send(h), 3.0)
         except AttributeError:
@@ -1551,17 +1610,23 @@ class Engine:
                         # color pulse: steady brightness, the beat moves the color A -> B and back
                         b = max(1, min(100, int(cfg["maxB"])))
                         hue, sat = pulse_color(ccfg, L.env)
-                        sat = max(1, min(100, sat))
-                        L.hue_now = float(hue)
+                        if is_white(hue, sat):
+                            L.hue_now = None            # white: no hue to glide from
+                        else:
+                            sat = max(1, min(100, sat))
+                            L.hue_now = float(hue)
                     else:
                         which = dcfg.get("color", "blend")
                         target_hue, sat = pick_color(ccfg, tracker.bpm, which)
-                        sat = max(1, min(100, sat))
-                        if L.hue_now is None:
-                            L.hue_now = float(target_hue)
-                        diff = ((target_hue - L.hue_now + 180) % 360) - 180
-                        L.hue_now = (L.hue_now + diff * min(1.0, dt * 1.5)) % 360
-                        hue = int(round(L.hue_now / 4.0) * 4) % 360
+                        if is_white(target_hue, sat):
+                            hue, L.hue_now = target_hue, None   # white light: no hue to glide
+                        else:
+                            sat = max(1, min(100, sat))
+                            if L.hue_now is None:
+                                L.hue_now = float(target_hue)
+                            diff = ((target_hue - L.hue_now + 180) % 360) - 180
+                            L.hue_now = (L.hue_now + diff * min(1.0, dt * 1.5)) % 360
+                            hue = int(round(L.hue_now / 4.0) * 4) % 360
                     if shape:
                         # what will be heard when this command reaches the bulb
                         sh = tracker.shape_at(now + L.lat)
@@ -1581,8 +1646,11 @@ class Engine:
                         b = max(1, min(100, int(round((cfg["minB"] + span * lv) / 10.0) * 10)))
                     pv = self.preview
                     if pv and now < pv[2]:            # Settings is previewing a color: show it plainly
-                        hue, sat, b = pv[0], max(1, pv[1]), max(1, min(100, int(cfg["maxB"])))
-                        L.hue_now = float(hue)
+                        hue, sat, b = pv[0], pv[1], max(1, min(100, int(cfg["maxB"])))
+                        if is_white(hue, sat):
+                            L.hue_now = None
+                        else:
+                            sat, L.hue_now = max(1, sat), float(hue)
                     lamps.append({"name": L.name, "b": b, "hex": hsv_hex(hue, sat), "ok": L.fails < 3, "sound": sound})
 
                     if k == 0:
@@ -1750,6 +1818,11 @@ def _apply_config_locked(body):
     new["steady"] = bool(new["steady"])
     for k in ("colorA", "colorB"):     # presets and pages send these; keep the old one if garbled
         if not (isinstance(new[k], str) and re.fullmatch(r"#[0-9a-fA-F]{6}", new[k])):
+            new[k] = ENGINE.cfg.get(k, DEFAULTS[k])
+    for k in ("kelvinA", "kelvinB"):
+        try:
+            new[k] = clamp_kelvin(new[k])
+        except (TypeError, ValueError):
             new[k] = ENGINE.cfg.get(k, DEFAULTS[k])
     if new["mode"] not in ("tempo", "fixed"):
         new["mode"] = "tempo"
@@ -1999,7 +2072,7 @@ class Handler(BaseHTTPRequestHandler):
             r = preset_action(body)
             self._send(200, json.dumps(dict(r, state=self._state())))
         elif self.path == "/api/preview":
-            self._send(200, json.dumps(preview_color(body.get("color"))))
+            self._send(200, json.dumps(preview_color(body.get("color"), body.get("kelvin"))))
         elif self.path == "/api/flash":
             ENGINE.flash = True
             self._send(200, json.dumps(self._state()))

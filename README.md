@@ -76,7 +76,7 @@ In **Settings → Sound**, switch on **Start when a music app plays**. Temponome
 
 ### Colors and extras
 
-In **Settings → Colors**, choose whether each beat makes the lights **brighter** or makes them **jump from your calm color to your energetic one**. Then switch on any of these:
+In **Settings → Colors**, choose whether each beat makes the lights **brighter** or makes them **jump from your calm color to your energetic one**. Pick white in the middle of the color wheel and a slider lets you make it **warm or cool**, using the bulbs' own white light. Then switch on any of these:
 
 - **Stronger first beat.** Beat 1 of each bar flashes full and the others softer, so you can feel where each bar starts.
 - **Turn the colors around the wheel.** Every 4 or 8 bars both colors move a step, so a long song keeps changing.

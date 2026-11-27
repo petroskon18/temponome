@@ -226,6 +226,26 @@ function svgEl(tag, attrs, parent) {
   return e;
 }
 let pickKey = 'colorA', liveBpm = 0;
+// White can be warm or cool: the lights use their white LEDs at that color temperature
+// (same numbers as temponome.kelvin_hex, so the screen matches the lamps on the stage)
+const isWhiteHex = hex => hex2hs(hex)[1] < 0.005;
+const kKey = key => 'kelvin' + key.slice(-1);
+function kelvinHex(k) {
+  const t = (Math.min(6500, Math.max(2500, k)) - 2500) / 4000, warm = [255, 180, 107], cool = [236, 241, 255];
+  return '#' + warm.map((w, i) => Math.round(w + (cool[i] - w) * t).toString(16).padStart(2, '0')).join('');
+}
+const shown = key => isWhiteHex(cfg[key]) ? kelvinHex(cfg[kKey(key)] || 4000) : cfg[key];
+function ctWord(k) { return (k <= 3300 ? 'Warm white' : k >= 5000 ? 'Cool white' : 'Neutral white') + ` · ${k} K`; }
+function showCt() {
+  const white = isWhiteHex(cfg[pickKey]), k = cfg[kKey(pickKey)] || 4000;
+  $('ctBox').hidden = !white;
+  if (!white) return;
+  $('ct').value = k; $('ctV').textContent = ctWord(k); $('ct').setAttribute('aria-valuetext', ctWord(k));
+}
+$('ct').oninput = () => {
+  const k = +$('ct').value; cfg[kKey(pickKey)] = k;
+  T.saveCfg({ [kKey(pickKey)]: k }); showCt(); drawMarks(); drawStrip();
+};
 
 function buildWheel() {
   const w = $('wheel'), band = (R_OUT - R_IN) / RINGS;
@@ -236,7 +256,7 @@ function buildWheel() {
     piece.onclick = () => setColor(hex);
   }
   svgEl('circle', { cx: CX, cy: CY, r: R_OUT, fill: 'none', stroke: 'var(--well)', 'stroke-width': 2 }, w);
-  const white = svgEl('circle', { cx: CX, cy: CY, r: R_IN, fill: '#ffffff', stroke: 'var(--well)', 'stroke-width': 2 }, w);
+  const white = svgEl('circle', { id: 'whiteDot', cx: CX, cy: CY, r: R_IN, fill: '#ffffff', stroke: 'var(--well)', 'stroke-width': 2 }, w);
   white.style.cursor = 'pointer';
   white.onclick = () => setColor('#ffffff');
   svgEl('g', { id: 'marks' }, w);
@@ -252,17 +272,21 @@ function drawMarks() {
   const keys = cfg.mode === 'fixed' ? ['colorA'] : (pickKey === 'colorA' ? ['colorB', 'colorA'] : ['colorA', 'colorB']);
   for (const k of keys) {             // the color being set is drawn last, on top, and larger
     const [x, y] = markerAt(cfg[k]), on = k === pickKey;
-    svgEl('circle', { cx: x, cy: y, r: on ? 10 : 8, fill: cfg[k], stroke: '#1d1d1f', 'stroke-width': on ? 5 : 4 }, g);
+    svgEl('circle', { cx: x, cy: y, r: on ? 10 : 8, fill: shown(k), stroke: '#1d1d1f', 'stroke-width': on ? 5 : 4 }, g);
     svgEl('circle', { cx: x, cy: y, r: on ? 10 : 8, fill: 'none', stroke: '#ffffff', 'stroke-width': on ? 3 : 2 }, g);
   }
-  $('swA').style.background = cfg.colorA; $('swB').style.background = cfg.colorB;
+  $('swA').style.background = shown('colorA'); $('swB').style.background = shown('colorB');
+  // the white center shows the warmth of the white being set
+  $('whiteDot').setAttribute('fill', isWhiteHex(cfg[pickKey]) ? shown(pickKey) : '#ffffff');
   $('wheel').setAttribute('aria-label', `Color wheel, setting the ${pickKey === 'colorA' ? 'calm' : 'energetic'} color`);
 }
 
 // same blend as the lights (temponome.pick_color): around the wheel, the short way
 function blendAt(bpm) {
   let [ha, sa] = hex2hs(cfg.colorA), [hb, sb] = hex2hs(cfg.colorB);
-  if (cfg.mode === 'fixed') return hsv2hex(ha, sa, 1);
+  if (cfg.mode === 'fixed') return shown('colorA');
+  const t0 = Math.min(Math.max((bpm - 60) / 120, 0), 1);
+  if (sa < 0.005 && sb < 0.005) return kelvinHex(Math.round(((cfg.kelvinA || 4000) + ((cfg.kelvinB || 4000) - (cfg.kelvinA || 4000)) * t0) / 100) * 100);
   if (sa < 0.005) ha = hb;
   if (sb < 0.005) hb = ha;
   const t = Math.min(Math.max((bpm - 60) / 120, 0), 1), d = ((hb - ha + 540) % 360) - 180;
@@ -287,13 +311,13 @@ function drawStrip() {
 }
 function setColor(hex) {
   cfg[pickKey] = hex; T.saveCfg({ [pickKey]: hex });
-  drawMarks(); drawStrip();
+  drawMarks(); drawStrip(); showCt();
 }
 function setPick(key) {
   pickKey = cfg.mode === 'fixed' ? 'colorA' : key;
   $('pickA').setAttribute('aria-checked', pickKey === 'colorA');
   $('pickB').setAttribute('aria-checked', pickKey === 'colorB');
-  drawMarks();
+  drawMarks(); showCt();
 }
 function showMode() {
   const pulse = cfg.pulse === 'color';
@@ -315,7 +339,7 @@ $('wheel').onkeydown = e => {          // arrow keys walk the wheel: left/right 
   setColor(r >= RINGS ? '#ffffff' : pieceHex(i, r));
 };
 $('preview').onclick = async () => {
-  const r = await T.api('/api/preview', { color: cfg[pickKey] });
+  const r = await T.api('/api/preview', { color: cfg[pickKey], kelvin: cfg[kKey(pickKey)] });
   $('pvMsg').className = r.ok ? 'msg' : 'msg err';
   $('pvMsg').textContent = r.ok ? 'Showing it on your lights for a moment.' : r.error;
   clearTimeout($('pvMsg').t); $('pvMsg').t = setTimeout(() => { $('pvMsg').textContent = ''; }, 4000);
