@@ -71,6 +71,7 @@ DEFAULTS = {
     "music_apps": [],      # apps that count as music for autostart (filled below)
     "guide_done": False,   # the first-run guide was finished or skipped
     "preset_last": "",     # preset last put on or saved (shown first when several match)
+    "menubar": True,       # show the lamp in the Mac's menu bar (closing the window then keeps it running)
 }
 
 # ---------- presets ----------
@@ -1830,6 +1831,7 @@ def _apply_config_locked(body):
     new["music_apps"] = clean_music_apps(new["music_apps"])
     new["autostart"] = bool(new["autostart"])
     new["guide_done"] = bool(new["guide_done"])
+    new["menubar"] = bool(new["menubar"])
     new["preset_last"] = preset_name(new["preset_last"])
     new["lead"] = max(-150, min(250, int(new["lead"])))
     new["passthru"] = bool(new["passthru"])

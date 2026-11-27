@@ -9,6 +9,7 @@ import os
 import socket
 import sys
 import threading
+import time
 import webbrowser
 
 if not getattr(sys, "frozen", False):   # running from the source folder
@@ -201,9 +202,13 @@ class Shell:
         self._quit = quit or (lambda: on_main_closed(server))
 
     def on_closing(self):
-        """Red close button: hide the window and keep playing (the menu bar lamp stays)."""
+        """Red close button: with the menu bar lamp on, hide the window and keep playing;
+        with it off, quit (there would be no lamp to bring the window back)."""
         if self.quitting:
             return True
+        if not temponome.ENGINE.cfg.get("menubar", True):
+            threading.Thread(target=self.quit, daemon=True).start()
+            return False                        # quit() exits once the lights are back
         self.main.hide()
         return False
 
@@ -249,11 +254,33 @@ def install_mac_hooks(shell):
 
             BrowserView._shared_app_delegate = TemponomeAppDelegate.alloc().init()
             BrowserView.app.setDelegate_(BrowserView._shared_app_delegate)
-            shell._menubar = menubar.make_menubar(temponome.state_dict, shell.action)
         except Exception as e:                  # never let the extras stop the app from working
+            print("app hooks unavailable:", e, file=sys.stderr)
+
+    def sync_lamp():
+        """Show or remove the menu bar lamp to match the setting (Settings → Lights)."""
+        want = bool(temponome.ENGINE.cfg.get("menubar", True))
+        have = getattr(shell, "_menubar", None)
+        try:
+            import menubar
+            if want and have is None:
+                shell._menubar = menubar.make_menubar(temponome.state_dict, shell.action)
+            elif not want and have is not None:
+                menubar.remove_menubar(have)
+                shell._menubar = None
+        except Exception as e:
             print("menu bar unavailable:", e, file=sys.stderr)
 
+    def watch():
+        while True:                             # the switch takes effect within a second
+            want = bool(temponome.ENGINE.cfg.get("menubar", True))
+            if want != (getattr(shell, "_menubar", None) is not None):
+                AppHelper.callAfter(sync_lamp)
+            time.sleep(1.0)
+
     AppHelper.callAfter(install)
+    AppHelper.callAfter(sync_lamp)
+    threading.Thread(target=watch, daemon=True).start()
 
 
 def run():

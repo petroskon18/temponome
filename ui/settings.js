@@ -669,6 +669,12 @@ $('appAdd').onclick = async () => {
   box.hidden = false;
 };
 
+// ---------- menu bar lamp (Lights → App) ----------
+$('menubar').onclick = () => {
+  cfg.menubar = $('menubar').getAttribute('aria-checked') !== 'true';
+  $('menubar').setAttribute('aria-checked', cfg.menubar); T.saveCfg({ menubar: cfg.menubar });
+};
+
 // ---------- welcome guide (Lights) ----------
 $('guideAgain').onclick = () => {
   if (window.pywebview && window.pywebview.api && window.pywebview.api.show_guide) window.pywebview.api.show_guide();
@@ -703,6 +709,7 @@ async function init() {
   buildWheel(); showMode();
   renderDevs(); calSummary();
   curPreset = st.preset; renderPresets(); renderApps();
+  $('menubar').setAttribute('aria-checked', cfg.menubar !== false);
   showTab(location.hash.slice(1));
   let rev = st.cfg_rev;
   setInterval(async () => {

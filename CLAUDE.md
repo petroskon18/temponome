@@ -258,6 +258,8 @@ anything they must do on their Mac, and keep the double-click launcher working.
      ⌘Q/Quit go through `TemponomeAppDelegate.applicationShouldTerminate_` → `on_main_closed`
      (lights put back). pywebview re-sets the app delegate for every new window, so ours is
      stored in `BrowserView._shared_app_delegate`. Not shown with the old launcher.
+     Optional (owner, 2026-11-27): setting `menubar` (default on, Settings → Lights → App); a
+     watcher adds/removes the lamp within 1 s; with it off the close button quits.
    - First-run guide (main.html `#guide`, `guide_done`): shown when no light is set up;
      Settings → Lights "Show the welcome guide" (`Api.show_guide`, or `/#guide` in a browser).
      `GET /api/devices?fresh=1` re-asks PortAudio so a just-installed BlackHole shows up.

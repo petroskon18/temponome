@@ -105,3 +105,10 @@ def make_menubar(get_state, on_action):
     menu.setDelegate_(delegate)
     item.setMenu_(menu)
     return item, menu, delegate
+
+
+def remove_menubar(handle):
+    """Take the lamp out of the menu bar (call on the main thread)."""
+    from AppKit import NSStatusBar
+    item = handle[0]
+    NSStatusBar.systemStatusBar().removeStatusItem_(item)

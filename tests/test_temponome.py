@@ -1560,6 +1560,25 @@ class MenuBarAndShell(unittest.TestCase):
         self.assertEqual(quits, [1])
         self.assertTrue(sh.on_closing())           # while quitting, windows may close
 
+    def test_without_the_lamp_closing_quits(self):
+        class Win:
+            hidden = 0
+            def hide(self): self.hidden += 1
+        quits, w = [], Win()
+        sh = self.A.Shell(None, None, w, quit=lambda: quits.append(1))
+        old = T.ENGINE.cfg
+        T.ENGINE.cfg = dict(old, menubar=False)
+        try:
+            self.assertFalse(sh.on_closing())      # quit() closes everything once the lights are back
+            for _ in range(50):
+                if quits:
+                    break
+                time.sleep(0.01)
+        finally:
+            T.ENGINE.cfg = old
+        self.assertEqual((quits, w.hidden), ([1], 0))
+        self.assertTrue(T.DEFAULTS["menubar"])
+
     def test_menu_play_toggles_the_engine(self):
         sh = self.A.Shell(None, None, None, quit=lambda: None)
         old = T.ENGINE.start, T.ENGINE.stop
